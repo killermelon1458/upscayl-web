@@ -4,18 +4,22 @@ import { useAtomValue } from "jotai";
 import { translationAtom } from "@/atoms/translations-atom";
 import { ELECTRON_COMMANDS } from "@common/electron-commands";
 import useLogger from "../hooks/use-logger";
+import { useRuntime } from "@/runtime/runtime-context";
 
 function ProgressBar({
   progress,
   doubleUpscaylCounter,
   batchMode,
   resetImagePaths,
+  jobId,
 }: {
   progress: string;
   doubleUpscaylCounter: number;
   batchMode: boolean;
   resetImagePaths: () => void;
+  jobId?: string;
 }) {
+  const runtime = useRuntime();
   const [batchProgress, setBatchProgress] = React.useState(0);
   const t = useAtomValue(translationAtom);
   const logit = useLogger();
@@ -29,7 +33,12 @@ function ProgressBar({
   }, [progress]);
 
   const stopHandler = () => {
-    window.electron.send(ELECTRON_COMMANDS.STOP);
+    if (jobId) {
+      runtime.cancelJob(jobId);
+    } else {
+      // Batch and double-upscale still use the legacy Electron flow.
+      window.electron.send(ELECTRON_COMMANDS.STOP);
+    }
     logit("🛑 Stopping Upscayl");
   };
 

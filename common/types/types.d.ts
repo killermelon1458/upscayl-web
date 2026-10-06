@@ -1,4 +1,4 @@
-import { ImageFormat } from "@electron/types/types";
+import { ImageFormat } from "../image-formats";
 
 export type ImageUpscaylPayload = {
   imagePath: string;

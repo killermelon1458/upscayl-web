@@ -1,6 +1,7 @@
 import getModelScale from "../../common/check-model-scale";
 import { getPlatform } from "./get-device-specs";
 import { ImageFormat } from "../types/types";
+import { buildSingleImageArguments } from "../../common/upscayl-arguments";
 const slash: string = getPlatform() === "win" ? "\\" : "/";
 
 export const getSingleImageArguments = ({
@@ -30,42 +31,19 @@ export const getSingleImageArguments = ({
   compression: string;
   ttaMode: boolean;
 }) => {
-  const modelScale = getModelScale(model);
-  let includeScale = modelScale !== scale && !customWidth;
-  return [
-    // INPUT IMAGE
-    "-i",
-    inputDir + slash + fileNameWithExt,
-    // OUTPUT IMAGE
-    "-o",
-    outFile,
-    // OUTPUT SCALE
-    includeScale ? "-s" : "",
-    includeScale ? scale : "",
-    // MODELS PATH
-    "-m",
+  return buildSingleImageArguments({
+    inputPath: inputDir + slash + fileNameWithExt,
+    outputPath: outFile,
     modelsPath,
-    // MODEL NAME
-    "-n",
     model,
-    // GPU ID
-    gpuId ? "-g" : "",
-    gpuId ? gpuId : "",
-    // FORMAT
-    "-f",
+    scale,
+    gpuId,
     saveImageAs,
-    // CUSTOM WIDTH
-    customWidth ? `-w` : "",
-    customWidth ? customWidth : "",
-    // COMPRESSION
-    "-c",
+    customWidth,
+    tileSize,
     compression,
-    // TILE SIZE
-    tileSize ? `-t` : "",
-    tileSize ? tileSize.toString() : "",
-    // TTA MODE
-    ttaMode ? "-x" : "",
-  ];
+    ttaMode,
+  });
 };
 
 export const getDoubleUpscaleArguments = ({

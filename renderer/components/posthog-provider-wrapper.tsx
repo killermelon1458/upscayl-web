@@ -3,6 +3,7 @@ import { useAtomValue } from "jotai";
 import posthog from "posthog-js";
 import { PostHogProvider } from "posthog-js/react";
 import { useEffect } from "react";
+import { useRuntime } from "@/runtime/runtime-context";
 
 const PostHogProviderWrapper = ({
   children,
@@ -10,6 +11,7 @@ const PostHogProviderWrapper = ({
   children: React.ReactNode;
 }) => {
   const enableContribution = useAtomValue(enableContributionAtom);
+  const runtime = useRuntime();
 
   useEffect(() => {
     posthog.init("phc_QMcmlmComdofjfaRPzoN4KV9ziV2KgOwAOVyu4J3dIc", {
@@ -21,21 +23,25 @@ const PostHogProviderWrapper = ({
       disable_session_recording: true,
       loaded: async (posthog) => {
         if (process.env.NODE_ENV === "development") posthog.debug();
-        const systemInfo = await window.electron.getSystemInfo();
-        const appVersion = await window.electron.getAppVersion();
-        // Set super properties that will be included with all events
-        posthog.register({
-          ...systemInfo,
-          appVersion,
-        });
-        // Capture initial session start
-        posthog.capture("app_launched", {
-          ...systemInfo,
-          appVersion,
-        });
+        try {
+          const systemInfo = await runtime.getSystemInfo();
+          const appVersion = await runtime.getVersion();
+          // Set super properties that will be included with all events
+          posthog.register({
+            ...systemInfo,
+            appVersion,
+          });
+          // Capture initial session start
+          posthog.capture("app_launched", {
+            ...systemInfo,
+            appVersion,
+          });
+        } catch (error) {
+          console.warn("Runtime system information is unavailable", error);
+        }
       },
     });
-  }, []);
+  }, [runtime]);
 
   if (enableContribution === false) return <>{children}</>;
 

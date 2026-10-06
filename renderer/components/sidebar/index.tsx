@@ -26,7 +26,6 @@ import useLogger from "../hooks/use-logger";
 import {
   BatchUpscaylPayload,
   DoubleUpscaylPayload,
-  ImageUpscaylPayload,
 } from "@common/types/types";
 import { useToast } from "@/components/ui/use-toast";
 import UpscaylSteps from "./upscayl-tab/upscayl-steps";
@@ -42,27 +41,32 @@ import useUpscaylVersion from "../hooks/use-upscayl-version";
 import useTranslation from "../hooks/use-translation";
 import UpscaylLogo from "./upscayl-logo";
 import SidebarToggleButton from "./sidebar-button";
+import { ImageAsset, JobInfo, ResultAsset } from "@common/types/runtime";
+import { useRuntime } from "@/runtime/runtime-context";
 
 const Sidebar = ({
-  setUpscaledImagePath,
+  setResultAsset,
   batchFolderPath,
   setUpscaledBatchFolderPath,
   dimensions,
-  imagePath,
+  inputAsset,
   selectImageHandler,
   selectFolderHandler,
+  onJobStarted,
 }: {
-  setUpscaledImagePath: React.Dispatch<React.SetStateAction<string>>;
+  setResultAsset: React.Dispatch<React.SetStateAction<ResultAsset | null>>;
   batchFolderPath: string;
   setUpscaledBatchFolderPath: React.Dispatch<React.SetStateAction<string>>;
   dimensions: {
     width: number | null;
     height: number | null;
   };
-  imagePath: string;
+  inputAsset: ImageAsset | null;
   selectImageHandler: () => Promise<void>;
   selectFolderHandler: () => Promise<void>;
+  onJobStarted: (job: JobInfo) => void;
 }) => {
+  const runtime = useRuntime();
   const t = useTranslation();
   const logit = useLogger();
   const { toast } = useToast();
@@ -98,16 +102,16 @@ const Sidebar = ({
 
   const upscaylHandler = async () => {
     logit("🔄 Resetting Upscaled Image Path");
-    setUpscaledImagePath("");
+    setResultAsset(null);
     setUpscaledBatchFolderPath("");
-    if (imagePath !== "" || batchFolderPath !== "") {
+    if (inputAsset || batchFolderPath !== "") {
       setProgress(t("APP.PROGRESS.WAIT_TITLE"));
       // Double Upscayl
       if (doubleUpscayl) {
         window.electron.send<DoubleUpscaylPayload>(
           ELECTRON_COMMANDS.DOUBLE_UPSCAYL,
           {
-            imagePath,
+            imagePath: inputAsset?.id ?? "",
             outputPath,
             model: selectedModelId,
             gpuId: gpuId.length === 0 ? null : gpuId,
@@ -160,29 +164,41 @@ const Sidebar = ({
         logit("🏁 FOLDER_UPSCAYL");
       } else {
         // Single Image Upscayl
-        window.electron.send<ImageUpscaylPayload>(ELECTRON_COMMANDS.UPSCAYL, {
-          imagePath,
-          outputPath,
-          model: selectedModelId,
-          gpuId: gpuId.length === 0 ? null : gpuId,
-          saveImageAs,
-          scale,
-          overwrite,
-          noImageProcessing,
-          compression: compression.toString(),
-          customWidth: customWidth > 0 ? customWidth.toString() : null,
-          useCustomWidth,
-          tileSize,
-          ttaMode,
-          copyMetadata,
-        });
-        setUserStats((prev) => ({
-          ...prev,
-          totalUpscayls: prev.totalUpscayls + 1,
-          lastUsedAt: new Date().getTime(),
-          imageUpscayls: prev.imageUpscayls + 1,
-        }));
-        logit("🏁 UPSCAYL");
+        if (!inputAsset) {
+          throw new Error("No image asset is selected.");
+        }
+        try {
+          const job = await runtime.startJob({
+            input: { type: "image", assetId: inputAsset.id },
+            outputTargetId: outputPath,
+            model: selectedModelId,
+            gpuId,
+            saveImageAs,
+            scale,
+            overwrite,
+            noImageProcessing,
+            compression: compression.toString(),
+            customWidth: customWidth > 0 ? customWidth.toString() : "",
+            useCustomWidth,
+            tileSize,
+            ttaMode,
+            copyMetadata,
+          });
+          onJobStarted(job);
+          setUserStats((prev) => ({
+            ...prev,
+            totalUpscayls: prev.totalUpscayls + 1,
+            lastUsedAt: new Date().getTime(),
+            imageUpscayls: prev.imageUpscayls + 1,
+          }));
+          logit("🏁 UPSCAYL");
+        } catch (error) {
+          setProgress("");
+          toast({
+            title: t("ERRORS.GENERIC_ERROR.TITLE"),
+            description: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     } else {
       toast({
@@ -213,7 +229,7 @@ const Sidebar = ({
           <ChevronLeftIcon />
         </button>
 
-        {window.electron.platform === "mac" && (
+        {runtime.capabilities.hasNativeTitleBar && (
           <div className="mac-titlebar pt-8"></div>
         )}
 
@@ -230,7 +246,7 @@ const Sidebar = ({
             upscaylHandler={upscaylHandler}
             batchMode={batchMode}
             setBatchMode={setBatchMode}
-            imagePath={imagePath}
+            imageName={inputAsset?.name ?? ""}
             doubleUpscayl={doubleUpscayl}
             setDoubleUpscayl={setDoubleUpscayl}
             dimensions={dimensions}

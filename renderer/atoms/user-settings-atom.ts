@@ -1,4 +1,4 @@
-import { ImageFormat } from "@/lib/valid-formats";
+import { ImageFormat } from "@common/image-formats";
 import { ModelId } from "@common/models-list";
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";

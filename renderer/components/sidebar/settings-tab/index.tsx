@@ -20,12 +20,13 @@ import { InputCustomResolution } from "./input-custom-resolution";
 import { InputTileSize } from "./input-tile-size";
 import LanguageSwitcher from "./language-switcher";
 import { translationAtom } from "@/atoms/translations-atom";
-import { ImageFormat } from "@/lib/valid-formats";
+import { ImageFormat } from "@common/image-formats";
 import EnableContributionToggle from "./enable-contributions-toggle";
 import AutoUpdateToggle from "./auto-update-toggle";
 import TTAModeToggle from "./tta-mode-toggle";
 import SystemInfo from "./system-info";
 import CopyMetadataToggle from "./copy-metadata-toggle";
+import { useRuntime } from "@/runtime/runtime-context";
 
 interface IProps {
   batchMode: boolean;
@@ -54,6 +55,7 @@ function SettingsTab({
   setShow,
   setDontShowCloudModal,
 }: IProps) {
+  const runtime = useRuntime();
   const [isCopied, setIsCopied] = useState(false);
 
   const [customModelsPath, setCustomModelsPath] = useAtom(customModelsPathAtom);
@@ -102,10 +104,6 @@ function SettingsTab({
       throw error;
     }
   };
-
-  const upscaylVersion = navigator?.userAgent?.match(
-    /Upscayl\/([\d\.]+\d+)/,
-  )[1];
 
   function disableScrolling() {
     if (timeoutId !== null) {
@@ -196,11 +194,13 @@ function SettingsTab({
         handleCompressionChange={handleCompressionChange}
       />
 
-      <SaveOutputFolderToggle />
+      {runtime.capabilities.canSelectOutputTarget && <SaveOutputFolderToggle />}
 
       <OverwriteToggle />
-      <TurnOffNotificationsToggle />
-      <AutoUpdateToggle />
+      {runtime.capabilities.hasNativeNotifications && (
+        <TurnOffNotificationsToggle />
+      )}
+      {runtime.capabilities.hasNativeUpdates && <AutoUpdateToggle />}
       <EnableContributionToggle />
 
       {/* GPU ID INPUT */}
@@ -209,10 +209,12 @@ function SettingsTab({
       <InputTileSize />
 
       {/* CUSTOM MODEL */}
-      <CustomModelsFolderSelect
-        customModelsPath={customModelsPath}
-        setCustomModelsPath={setCustomModelsPath}
-      />
+      {runtime.capabilities.supportsCustomModels && (
+        <CustomModelsFolderSelect
+          customModelsPath={customModelsPath}
+          setCustomModelsPath={setCustomModelsPath}
+        />
+      )}
 
       <TTAModeToggle />
 

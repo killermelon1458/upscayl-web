@@ -1,5 +1,8 @@
+import { useRuntime } from "@/runtime/runtime-context";
+
 const MacTitlebarDragRegion = () => {
-  return window.electron.platform === "mac" ? (
+  const runtime = useRuntime();
+  return runtime.capabilities.hasNativeTitleBar ? (
     <div className="mac-titlebar absolute top-0 h-8 w-full"></div>
   ) : null;
 };

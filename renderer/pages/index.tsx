@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ELECTRON_COMMANDS } from "@common/electron-commands";
 import { useAtomValue, useSetAtom } from "jotai";
 import { customModelIdsAtom } from "../atoms/models-list-atom";
@@ -17,14 +17,22 @@ import UpscaylSVGLogo from "@/components/icons/upscayl-logo-svg";
 import { translationAtom } from "@/atoms/translations-atom";
 import Sidebar from "@/components/sidebar";
 import MainContent from "@/components/main-content";
-import getDirectoryFromPath from "@common/get-directory-from-path";
-import { FEATURE_FLAGS } from "@common/feature-flags";
 import { ImageFormat, VALID_IMAGE_FORMATS } from "@/lib/valid-formats";
 import { initCustomModels } from "@/components/hooks/use-custom-models";
 import { OnboardingDialog } from "@/components/main-content/onboarding-dialog";
 import useSystemInfo from "@/components/hooks/use-system-info";
+import {
+  ImageAsset,
+  JobErrorCode,
+  JobInfo,
+  ResultAsset,
+} from "@common/types/runtime";
+import { useRuntime } from "@/runtime/runtime-context";
+import getFilenameFromPath from "@common/get-file-name";
+import { sanitizePath } from "@common/sanitize-path";
 
 const Home = () => {
+  const runtime = useRuntime();
   const t = useAtomValue(translationAtom);
   const logit = useLogger();
   const { toast } = useToast();
@@ -33,8 +41,10 @@ const Home = () => {
   initCustomModels();
 
   const [isLoading, setIsLoading] = useState(true);
-  const [imagePath, setImagePath] = useState("");
-  const [upscaledImagePath, setUpscaledImagePath] = useState("");
+  const [inputAsset, setInputAsset] = useState<ImageAsset | null>(null);
+  const [resultAsset, setResultAsset] = useState<ResultAsset | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const activeJobIdRef = useRef<string | null>(null);
   const [dimensions, setDimensions] = useState({
     width: null,
     height: null,
@@ -51,18 +61,21 @@ const Home = () => {
 
   const selectImageHandler = async () => {
     resetImagePaths();
-    const path = await window.electron.invoke(ELECTRON_COMMANDS.SELECT_FILE);
-    if (path === null) return;
-    logit("🖼 Selected Image Path: ", path);
-    setImagePath(path);
-    const dirname = getDirectoryFromPath(path);
-    logit("📁 Selected Image Directory: ", dirname);
-    if (!FEATURE_FLAGS.APP_STORE_BUILD) {
+    try {
+      const asset = await runtime.selectImage();
+      if (asset === null) return;
+      logit("🖼 Selected Image Asset: ", asset.name);
+      setInputAsset(asset);
       if (!rememberOutputFolder) {
-        setOutputPath(dirname);
+        setOutputPath(null);
       }
+      validateImageAsset(asset);
+    } catch (error) {
+      toast({
+        title: t("ERRORS.NO_IMAGE_ERROR.TITLE"),
+        description: error instanceof Error ? error.message : String(error),
+      });
     }
-    validateImagePath(path);
   };
 
   const selectFolderHandler = async () => {
@@ -83,10 +96,10 @@ const Home = () => {
     }
   };
 
-  const validateImagePath = (path: string) => {
-    if (path.length > 0) {
-      logit("🖼 imagePath: ", path);
-      const extension = path.split(".").pop().toLowerCase() as ImageFormat;
+  const validateImageAsset = (asset: ImageAsset) => {
+    if (asset.name.length > 0) {
+      logit("🖼 imageAsset: ", asset.name);
+      const extension = asset.name.split(".").pop().toLowerCase() as ImageFormat;
       logit("🔤 Extension: ", extension);
       if (!VALID_IMAGE_FORMATS.includes(extension)) {
         toast({
@@ -100,83 +113,101 @@ const Home = () => {
     }
   };
 
+  const handleErrors = (data: string, code?: JobErrorCode) => {
+    const errorCode =
+      code ??
+      (data.includes("Invalid GPU")
+        ? "invalid-gpu"
+        : data.includes("write") || data.includes("read")
+          ? "read-write"
+          : data.includes("tile size")
+            ? "tile-size"
+            : data.includes("uncaughtException")
+              ? "uncaught-exception"
+              : undefined);
+
+    if (errorCode === "invalid-gpu") {
+      toast({
+        title: t("ERRORS.GPU_ERROR.TITLE"),
+        description: t("ERRORS.GPU_ERROR.DESCRIPTION", { data }),
+        action: (
+          <div className="flex flex-col gap-2">
+            <ToastAction
+              altText={t("ERRORS.COPY_ERROR.TITLE")}
+              onClick={() => {
+                navigator.clipboard.writeText(data);
+              }}
+            >
+              {t("ERRORS.COPY_ERROR.TITLE")}
+            </ToastAction>
+            <a href="https://docs.upscayl.org/" target="_blank">
+              <ToastAction altText={t("ERRORS.OPEN_DOCS_TITLE")}>
+                {t("ERRORS.OPEN_DOCS_BUTTON_TITLE")}
+              </ToastAction>
+            </a>
+          </div>
+        ),
+      });
+    } else if (errorCode === "read-write") {
+      if (batchMode) return false;
+      toast({
+        title: t("ERRORS.READ_WRITE_ERROR.TITLE"),
+        description: t("ERRORS.READ_WRITE_ERROR.DESCRIPTION", { data }),
+        action: (
+          <div className="flex flex-col gap-2">
+            <ToastAction
+              altText="Copy Error"
+              onClick={() => {
+                navigator.clipboard.writeText(data);
+              }}
+            >
+              {t("ERRORS.COPY_ERROR.TITLE")}
+            </ToastAction>
+            <a href="https://docs.upscayl.org/" target="_blank">
+              <ToastAction altText={t("ERRORS.OPEN_DOCS_TITLE")}>
+                {t("ERRORS.OPEN_DOCS_BUTTON_TITLE")}
+              </ToastAction>
+            </a>
+          </div>
+        ),
+      });
+    } else if (errorCode === "tile-size") {
+      toast({
+        title: t("ERRORS.TILE_SIZE_ERROR.TITLE"),
+        description: t("ERRORS.TILE_SIZE_ERROR.DESCRIPTION", { data }),
+      });
+    } else if (errorCode === "uncaught-exception") {
+      toast({
+        title: t("ERRORS.EXCEPTION_ERROR.TITLE"),
+        description: t("ERRORS.EXCEPTION_ERROR.DESCRIPTION"),
+      });
+    } else {
+      return false;
+    }
+
+    resetImagePaths();
+    return true;
+  };
+
   // ELECTRON EVENT LISTENERS
   useEffect(() => {
-    const handleErrors = (data: string) => {
-      if (data.includes("Invalid GPU")) {
-        toast({
-          title: t("ERRORS.GPU_ERROR.TITLE"),
-          description: t("ERRORS.GPU_ERROR.DESCRIPTION", { data }),
-          action: (
-            <div className="flex flex-col gap-2">
-              <ToastAction
-                altText={t("ERRORS.COPY_ERROR.TITLE")}
-                onClick={() => {
-                  navigator.clipboard.writeText(data);
-                }}
-              >
-                {t("ERRORS.COPY_ERROR.TITLE")}
-              </ToastAction>
-              <a href="https://docs.upscayl.org/" target="_blank">
-                <ToastAction altText={t("ERRORS.OPEN_DOCS_TITLE")}>
-                  {t("ERRORS.OPEN_DOCS_BUTTON_TITLE")}
-                </ToastAction>
-              </a>
-            </div>
-          ),
-        });
-        resetImagePaths();
-      } else if (data.includes("write") || data.includes("read")) {
-        if (batchMode) return;
-        toast({
-          title: t("ERRORS.READ_WRITE_ERROR.TITLE"),
-          description: t("ERRORS.READ_WRITE_ERROR.DESCRIPTION", { data }),
-          action: (
-            <div className="flex flex-col gap-2">
-              <ToastAction
-                altText="Copy Error"
-                onClick={() => {
-                  navigator.clipboard.writeText(data);
-                }}
-              >
-                {t("ERRORS.COPY_ERROR.TITLE")}
-              </ToastAction>
-              <a href="https://docs.upscayl.org/" target="_blank">
-                <ToastAction altText={t("ERRORS.OPEN_DOCS_TITLE")}>
-                  {t("ERRORS.OPEN_DOCS_BUTTON_TITLE")}
-                </ToastAction>
-              </a>
-            </div>
-          ),
-        });
-        resetImagePaths();
-      } else if (data.includes("tile size")) {
-        toast({
-          title: t("ERRORS.TILE_SIZE_ERROR.TITLE"),
-          description: t("ERRORS.TILE_SIZE_ERROR.DESCRIPTION", { data }),
-        });
-        resetImagePaths();
-      } else if (data.includes("uncaughtException")) {
-        toast({
-          title: t("ERRORS.EXCEPTION_ERROR.TITLE"),
-          description: t("ERRORS.EXCEPTION_ERROR.DESCRIPTION"),
-        });
-        resetImagePaths();
-      }
-    };
+    if (!runtime.capabilities.supportsBatch) return;
     // LOG
     window.electron.on(ELECTRON_COMMANDS.LOG, (_, data: string) => {
+      if (activeJobIdRef.current) return;
       logit(`🎒 BACKEND REPORTED: `, data);
     });
     // SCALING AND CONVERTING
     window.electron.on(
       ELECTRON_COMMANDS.SCALING_AND_CONVERTING,
       (_, data: string) => {
+        if (activeJobIdRef.current) return;
         setProgress(t("APP.PROGRESS.PROCESSING_TITLE"));
       },
     );
     // UPSCAYL WARNING
     window.electron.on(ELECTRON_COMMANDS.UPSCAYL_WARNING, (_, data: string) => {
+      if (activeJobIdRef.current) return;
       toast({
         title: t("WARNING.GENERIC_WARNING.TITLE"),
         description: data,
@@ -184,6 +215,7 @@ const Home = () => {
     });
     // METADATA ERROR
     window.electron.on(ELECTRON_COMMANDS.METADATA_ERROR, (_, data: string) => {
+      if (activeJobIdRef.current) return;
       toast({
         title: t("ERRORS.METADATA_ERROR.TITLE"),
         description: data,
@@ -191,27 +223,13 @@ const Home = () => {
     });
     // UPSCAYL ERROR
     window.electron.on(ELECTRON_COMMANDS.UPSCAYL_ERROR, (_, data: string) => {
+      if (activeJobIdRef.current) return;
       toast({
         title: t("ERRORS.GENERIC_ERROR.TITLE"),
         description: data,
       });
       resetImagePaths();
     });
-    // UPSCAYL PROGRESS
-    window.electron.on(
-      ELECTRON_COMMANDS.UPSCAYL_PROGRESS,
-      (_, data: string) => {
-        if (data.length > 0 && data.length < 10) {
-          setProgress(data);
-        } else if (data.includes("converting")) {
-          setProgress(t("APP.PROGRESS.SCALING_CONVERTING_TITLE"));
-        } else if (data.includes("Successful")) {
-          setProgress(t("APP.PROGRESS.SUCCESS_TITLE"));
-        }
-        handleErrors(data);
-        logit(`🚧 UPSCAYL_PROGRESS: `, data);
-      },
-    );
     // FOLDER UPSCAYL PROGRESS
     window.electron.on(
       ELECTRON_COMMANDS.FOLDER_UPSCAYL_PROGRESS,
@@ -240,21 +258,6 @@ const Home = () => {
         logit(`🚧 DOUBLE_UPSCAYL_PROGRESS: `, data);
       },
     );
-    // UPSCAYL DONE
-    window.electron.on(ELECTRON_COMMANDS.UPSCAYL_DONE, (_, data: string) => {
-      setProgress("");
-      setUpscaledImagePath(data);
-      setUserStats((prev) => ({
-        ...prev,
-        lastUpscaylDuration: new Date().getTime() - prev.lastUsedAt,
-        averageUpscaylTime:
-          (prev.averageUpscaylTime * prev.totalUpscayls +
-            (new Date().getTime() - prev.lastUsedAt)) /
-          (prev.totalUpscayls + 1),
-      }));
-      logit("upscaledImagePath: ", data);
-      logit(`💯 UPSCAYL_DONE: `, data);
-    });
     // FOLDER UPSCAYL DONE
     window.electron.on(
       ELECTRON_COMMANDS.FOLDER_UPSCAYL_DONE,
@@ -277,7 +280,15 @@ const Home = () => {
       ELECTRON_COMMANDS.DOUBLE_UPSCAYL_DONE,
       (_, data: string) => {
         setProgress("");
-        setTimeout(() => setUpscaledImagePath(data), 500);
+        setTimeout(
+          () =>
+            setResultAsset({
+              id: data,
+              name: getFilenameFromPath(data),
+              previewUrl: `file:///${sanitizePath(data)}`,
+            }),
+          500,
+        );
         setDoubleUpscaylCounter(0);
         logit(`💯 DOUBLE_UPSCAYL_DONE: `, data);
         setUserStats((prev) => ({
@@ -301,6 +312,72 @@ const Home = () => {
     );
   }, []);
 
+  useEffect(() => {
+    if (!activeJobId) return;
+    return runtime.subscribeToJob(activeJobId, (event) => {
+      if (event.type === "started") {
+        setProgress(t("APP.PROGRESS.WAIT_TITLE"));
+      } else if (event.type === "progress") {
+        setProgress(event.message);
+      } else if (event.type === "phase") {
+        setProgress(
+          event.phase === "successful"
+            ? t("APP.PROGRESS.SUCCESS_TITLE")
+            : t("APP.PROGRESS.SCALING_CONVERTING_TITLE"),
+        );
+      } else if (event.type === "warning") {
+        toast({
+          title:
+            event.code === "metadata"
+              ? t("ERRORS.METADATA_ERROR.TITLE")
+              : t("WARNING.GENERIC_WARNING.TITLE"),
+          description: event.message,
+        });
+      } else if (event.type === "error") {
+        const handled = handleErrors(event.message, event.code);
+        if (!handled) {
+          toast({
+            title: t("ERRORS.GENERIC_ERROR.TITLE"),
+            description: event.message,
+          });
+          resetImagePaths();
+        }
+        setActiveJobId(null);
+        setTimeout(() => {
+          activeJobIdRef.current = null;
+        }, 0);
+      } else if (
+        event.type === "cancellation-requested" &&
+        !runtime.capabilities.confirmsCancellation
+      ) {
+        // Electron's legacy STOP IPC has no process-exit acknowledgement.
+        setProgress("");
+        activeJobIdRef.current = null;
+        setActiveJobId(null);
+      } else if (event.type === "cancelled") {
+        setProgress("");
+        activeJobIdRef.current = null;
+        setActiveJobId(null);
+      } else if (event.type === "complete") {
+        setProgress("");
+        setResultAsset(event.result);
+        setUserStats((prev) => ({
+          ...prev,
+          lastUpscaylDuration: new Date().getTime() - prev.lastUsedAt,
+          averageUpscaylTime:
+            (prev.averageUpscaylTime * prev.totalUpscayls +
+              (new Date().getTime() - prev.lastUsedAt)) /
+            (prev.totalUpscayls + 1),
+        }));
+        logit("resultAsset: ", event.result.name);
+        activeJobIdRef.current = null;
+        setActiveJobId(null);
+      } else if (event.type === "log") {
+        logit(`🎒 BACKEND REPORTED: `, event.message);
+      }
+    });
+  }, [activeJobId, runtime]);
+
   // LOADING STATE
   useEffect(() => {
     setIsLoading(false);
@@ -319,8 +396,8 @@ const Home = () => {
       height: null,
     });
     setProgress("");
-    setImagePath("");
-    setUpscaledImagePath("");
+    setInputAsset(null);
+    setResultAsset(null);
     setBatchFolderPath("");
     setUpscaledBatchFolderPath("");
   };
@@ -337,25 +414,30 @@ const Home = () => {
       onPaste={(e) => console.log(e)}
     >
       <Sidebar
-        imagePath={imagePath}
+        inputAsset={inputAsset}
         dimensions={dimensions}
-        setUpscaledImagePath={setUpscaledImagePath}
+        setResultAsset={setResultAsset}
         batchFolderPath={batchFolderPath}
         setUpscaledBatchFolderPath={setUpscaledBatchFolderPath}
         selectImageHandler={selectImageHandler}
         selectFolderHandler={selectFolderHandler}
+        onJobStarted={(job: JobInfo) => {
+          activeJobIdRef.current = job.id;
+          setActiveJobId(job.id);
+        }}
       />
       <MainContent
-        imagePath={imagePath}
+        inputAsset={inputAsset}
         resetImagePaths={resetImagePaths}
         upscaledBatchFolderPath={upscaledBatchFolderPath}
-        setImagePath={setImagePath}
-        validateImagePath={validateImagePath}
+        setInputAsset={setInputAsset}
+        validateImageAsset={validateImageAsset}
         selectFolderHandler={selectFolderHandler}
         selectImageHandler={selectImageHandler}
         batchFolderPath={batchFolderPath}
-        upscaledImagePath={upscaledImagePath}
+        resultAsset={resultAsset}
         doubleUpscaylCounter={doubleUpscaylCounter}
+        activeJobId={activeJobId ?? undefined}
         setDimensions={setDimensions}
       />
       <OnboardingDialog />

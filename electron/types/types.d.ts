@@ -1,3 +1,1 @@
-import { imageFormats } from "../../common/image-formats";
-
-export type ImageFormat = (typeof imageFormats)[number];
+export type { ImageFormat } from "../../common/image-formats";

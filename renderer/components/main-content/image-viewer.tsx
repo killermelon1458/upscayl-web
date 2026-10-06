@@ -1,15 +1,13 @@
-import { sanitizePath } from "@common/sanitize-path";
-
 const ImageViewer = ({
-  imagePath,
+  imageUrl,
   setDimensions,
 }: {
-  imagePath: string;
+  imageUrl: string;
   setDimensions: (dimensions: { width: number; height: number }) => void;
 }) => {
   return (
     <img
-      src={"file:///" + sanitizePath(imagePath)}
+      src={imageUrl}
       onLoad={(e: React.SyntheticEvent<HTMLImageElement>) => {
         setDimensions({
           width: e.currentTarget.naturalWidth,

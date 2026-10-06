@@ -17,9 +17,13 @@ import { selectedModelIdAtom } from "@/atoms/user-settings-atom";
 import { customModelIdsAtom } from "@/atoms/models-list-atom";
 import useTranslation from "@/components/hooks/use-translation";
 import posthog from "posthog-js";
+import { useRuntime } from "@/runtime/runtime-context";
 
 const SelectModelDialog = () => {
   const t = useTranslation();
+  const runtime = useRuntime();
+  const modelImageUrl = (modelId: string, image: "before" | "after") =>
+    `${runtime.capabilities.canRevealResult ? "public:///" : "/"}model-comparison/${modelId}/${image}.webp`;
   const [selectedModelId, setSelectedModelId] = useAtom(selectedModelIdAtom);
 
   const customModelIds = useAtomValue(customModelIdsAtom);
@@ -79,12 +83,12 @@ const SelectModelDialog = () => {
                     <div className="relative h-52 w-full overflow-hidden rounded-sm">
                       <div className="flex h-full w-full">
                         <img
-                          src={`public:///model-comparison/${model.id}/before.webp`}
+                          src={modelImageUrl(model.id, "before")}
                           alt={`Model Before`}
                           className="h-full w-1/2 object-cover"
                         />
                         <img
-                          src={`public:///model-comparison/${model.id}/after.webp`}
+                          src={modelImageUrl(model.id, "after")}
                           alt={`Model After`}
                           className="h-full w-1/2 object-cover"
                         />
@@ -146,7 +150,7 @@ const SelectModelDialog = () => {
             <div className="flex h-full w-full">
               <div className="relative h-full w-1/2">
                 <img
-                  src={`public:///model-comparison/${MODELS[zoomedModel]?.id}/before.webp`}
+                  src={modelImageUrl(MODELS[zoomedModel]?.id, "before")}
                   alt={`Zoomed in Image - Before`}
                   className="h-full w-full object-contain"
                 />
@@ -156,7 +160,7 @@ const SelectModelDialog = () => {
               </div>
               <div className="relative h-full w-1/2">
                 <img
-                  src={`public:///model-comparison/${MODELS[zoomedModel]?.id}/after.webp`}
+                  src={modelImageUrl(MODELS[zoomedModel]?.id, "after")}
                   alt={`Zoomed in Image - After`}
                   className="h-full w-full object-contain"
                 />

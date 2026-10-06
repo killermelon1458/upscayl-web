@@ -1,9 +1,7 @@
-import { IpcRenderer } from "electron";
-
 export interface IElectronAPI {
-  on: (command, func?) => IpcRenderer;
-  off: (command, func?) => IpcRenderer;
-  send: <T>(command, func?: T) => IpcRenderer;
+  on: (command, func?) => void;
+  off: (command, func?) => void;
+  send: <T>(command, func?: T) => void;
   invoke: (command, func?) => any;
   platform: "mac" | "win" | "linux";
   getSystemInfo: () => Promise<{

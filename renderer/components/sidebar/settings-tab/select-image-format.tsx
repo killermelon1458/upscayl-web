@@ -1,10 +1,11 @@
 import { translationAtom } from "@/atoms/translations-atom";
+import { ImageFormat } from "@common/image-formats";
 import { useAtomValue } from "jotai";
 
 type ImageFormatSelectProps = {
   batchMode: boolean;
-  saveImageAs: string;
-  setExportType: (arg: string) => void;
+  saveImageAs: ImageFormat;
+  setExportType: (arg: ImageFormat) => void;
 };
 
 export function SelectImageFormat({

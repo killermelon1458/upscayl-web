@@ -1,6 +1,7 @@
 import { translationAtom } from "@/atoms/translations-atom";
 import { useAtomValue } from "jotai";
 import React from "react";
+import useSystemInfo from "@/components/hooks/use-system-info";
 
 type GpuIdInputProps = {
   gpuId: string;
@@ -9,6 +10,7 @@ type GpuIdInputProps = {
 
 export function InputGpuId({ gpuId, handleGpuIdChange }) {
   const t = useAtomValue(translationAtom);
+  const { systemInfo } = useSystemInfo();
 
   return (
     <div className="flex flex-col gap-2">
@@ -16,11 +18,11 @@ export function InputGpuId({ gpuId, handleGpuIdChange }) {
       <p className="text-xs text-base-content/80">
         {t("SETTINGS.GPU_ID_INPUT.DESCRIPTION")}
       </p>
-      {window.electron.platform === "win" && (
+      {systemInfo?.platform === "win" || systemInfo?.platform === "win32" ? (
         <p className="text-xs text-base-content/80">
           {t("SETTINGS.GPU_ID_INPUT.ADDITIONAL_DESCRIPTION")}
         </p>
-      )}
+      ) : null}
       <input
         type="text"
         placeholder="Type here"

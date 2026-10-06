@@ -17,7 +17,8 @@ import { useToast } from "@/components/ui/use-toast";
 import { translationAtom } from "@/atoms/translations-atom";
 import { SelectImageScale } from "../settings-tab/select-image-scale";
 import SelectModelDialog from "./select-model-dialog";
-import { ImageFormat } from "@/lib/valid-formats";
+import { ImageFormat } from "@common/image-formats";
+import { useRuntime } from "@/runtime/runtime-context";
 
 interface IProps {
   selectImageHandler: () => Promise<void>;
@@ -25,7 +26,7 @@ interface IProps {
   upscaylHandler: () => Promise<void>;
   batchMode: boolean;
   setBatchMode: React.Dispatch<React.SetStateAction<boolean>>;
-  imagePath: string;
+  imageName: string;
   doubleUpscayl: boolean;
   setDoubleUpscayl: React.Dispatch<React.SetStateAction<boolean>>;
   dimensions: {
@@ -42,11 +43,12 @@ function UpscaylSteps({
   upscaylHandler,
   batchMode,
   setBatchMode,
-  imagePath,
+  imageName,
   doubleUpscayl,
   setDoubleUpscayl,
   dimensions,
 }: IProps) {
+  const runtime = useRuntime();
   const [scale, setScale] = useAtom(scaleAtom);
   const [outputPath, setOutputPath] = useAtom(savedOutputPathAtom);
   const [progress, setProgress] = useAtom(progressAtom);
@@ -113,6 +115,7 @@ function UpscaylSteps({
       className={`animate-step-in animate flex h-screen flex-col gap-7 overflow-y-auto overflow-x-hidden p-5`}
     >
       {/* BATCH OPTION */}
+      {runtime.capabilities.supportsBatch && (
       <div className="flex flex-row items-center gap-2">
         <input
           type="checkbox"
@@ -134,6 +137,7 @@ function UpscaylSteps({
           {t("APP.BATCH_MODE.TITLE")}
         </p>
       </div>
+      )}
 
       {/* STEP 1 */}
       <div className="animate-step-in">
@@ -142,7 +146,7 @@ function UpscaylSteps({
           className="btn btn-primary"
           onClick={!batchMode ? selectImageHandler : selectFolderHandler}
           data-tooltip-id="tooltip"
-          data-tooltip-content={imagePath}
+          data-tooltip-content={imageName}
         >
           {batchMode
             ? t("APP.FILE_SELECTION.BATCH_MODE_TYPE")
@@ -159,7 +163,7 @@ function UpscaylSteps({
           <SelectModelDialog />
         </div>
 
-        {!batchMode && (
+        {!batchMode && runtime.capabilities.supportsDoubleUpscale && (
           <div className="flex items-center gap-1">
             <input
               type="checkbox"
@@ -195,6 +199,7 @@ function UpscaylSteps({
       </div>
 
       {/* STEP 3 */}
+      {runtime.capabilities.canSelectOutputTarget && (
       <div className="animate-step-in">
         <div className="flex flex-col pb-2">
           <div className="step-heading flex items-center gap-2">
@@ -236,6 +241,7 @@ function UpscaylSteps({
           {t("APP.OUTPUT_PATH_SELECTION.BUTTON_TITLE")}
         </button>
       </div>
+      )}
 
       {/* STEP 4 */}
       <div className="animate-step-in">
@@ -255,7 +261,8 @@ function UpscaylSteps({
         <button
           className="btn btn-secondary"
           onClick={
-            progress.length > 0 || !outputPath
+            progress.length > 0 ||
+            (runtime.capabilities.requiresOutputTarget && !outputPath)
               ? () =>
                   toast({
                     description: t(

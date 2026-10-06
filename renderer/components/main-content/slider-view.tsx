@@ -3,12 +3,12 @@ import { ReactCompareSlider } from "react-compare-slider";
 import useTranslation from "../hooks/use-translation";
 
 const SliderView = ({
-  sanitizedImagePath,
-  sanitizedUpscaledImagePath,
+  imageUrl,
+  upscaledImageUrl,
   zoomAmount,
 }: {
-  sanitizedImagePath: string;
-  sanitizedUpscaledImagePath: string;
+  imageUrl: string;
+  upscaledImageUrl: string;
   zoomAmount: string;
 }) => {
   const t = useTranslation();
@@ -32,7 +32,7 @@ const SliderView = ({
 
           <img
             /* USE REGEX TO GET THE FILENAME AND ENCODE IT INTO PROPER FORM IN ORDER TO AVOID ERRORS DUE TO SPECIAL CHARACTERS */
-            src={"file:///" + sanitizedImagePath}
+            src={imageUrl}
             alt={t("APP.SLIDER.ORIGINAL_TITLE")}
             onMouseMove={handleMouseMove}
             style={{
@@ -51,7 +51,7 @@ const SliderView = ({
           </p>
           <img
             /* USE REGEX TO GET THE FILENAME AND ENCODE IT INTO PROPER FORM IN ORDER TO AVOID ERRORS DUE TO SPECIAL CHARACTERS */
-            src={"file:///" + sanitizedUpscaledImagePath}
+            src={upscaledImageUrl}
             alt={t("APP.SLIDER.UPSCAYLED_TITLE")}
             style={{
               objectFit: "contain",

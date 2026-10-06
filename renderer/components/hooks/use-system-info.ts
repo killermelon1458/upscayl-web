@@ -1,17 +1,22 @@
 import { useEffect, useState } from "react";
+import { SystemInfo } from "@common/types/runtime";
+import { useRuntime } from "@/runtime/runtime-context";
 
 const useSystemInfo = () => {
-  const [systemInfo, setSystemInfo] = useState<Awaited<
-    ReturnType<typeof window.electron.getSystemInfo>
-  > | null>(null);
+  const runtime = useRuntime();
+  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
 
   useEffect(() => {
     const getSystemInfo = async () => {
-      const systemInfo = await window.electron.getSystemInfo();
-      setSystemInfo(systemInfo);
+      try {
+        const systemInfo = await runtime.getSystemInfo();
+        setSystemInfo(systemInfo);
+      } catch {
+        setSystemInfo(null);
+      }
     };
     getSystemInfo();
-  }, []);
+  }, [runtime]);
   return { systemInfo };
 };
 

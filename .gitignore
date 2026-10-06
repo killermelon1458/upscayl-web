@@ -19,10 +19,13 @@ out/
 /dist/
 /export/electron
 /export/common
+/export/web
+/.upscayl-web-data/
 
 # misc
 .DS_Store
 *.pem
+*.tsbuildinfo
 
 # debug
 npm-debug.log*

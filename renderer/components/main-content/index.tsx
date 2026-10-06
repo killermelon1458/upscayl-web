@@ -2,19 +2,13 @@
 import useLogger from "../hooks/use-logger";
 import { useState, useMemo, useEffect } from "react";
 import { ELECTRON_COMMANDS } from "@common/electron-commands";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtomValue } from "jotai";
 import {
   batchModeAtom,
-  lensSizeAtom,
-  savedOutputPathAtom,
   progressAtom,
   viewTypeAtom,
-  rememberOutputFolderAtom,
 } from "../../atoms/user-settings-atom";
 import { useToast } from "@/components/ui/use-toast";
-import { sanitizePath } from "@common/sanitize-path";
-import getDirectoryFromPath from "@common/get-directory-from-path";
-import { FEATURE_FLAGS } from "@common/feature-flags";
 import { ImageFormat, VALID_IMAGE_FORMATS } from "@/lib/valid-formats";
 import ProgressBar from "./progress-bar";
 import InstructionsCard from "./instructions-card";
@@ -25,18 +19,21 @@ import LensViewer from "./lens-view";
 import ImageViewer from "./image-viewer";
 import useTranslation from "../hooks/use-translation";
 import SliderView from "./slider-view";
+import { ImageAsset, ResultAsset } from "@common/types/runtime";
+import { useRuntime } from "@/runtime/runtime-context";
 
 type MainContentProps = {
-  imagePath: string;
+  inputAsset: ImageAsset | null;
   resetImagePaths: () => void;
   upscaledBatchFolderPath: string;
-  setImagePath: React.Dispatch<React.SetStateAction<string>>;
-  validateImagePath: (path: string) => void;
+  setInputAsset: React.Dispatch<React.SetStateAction<ImageAsset | null>>;
+  validateImageAsset: (asset: ImageAsset) => void;
   selectFolderHandler: () => void;
   selectImageHandler: () => void;
-  upscaledImagePath: string;
+  resultAsset: ResultAsset | null;
   batchFolderPath: string;
   doubleUpscaylCounter: number;
+  activeJobId?: string;
   setDimensions: React.Dispatch<
     React.SetStateAction<{
       width: number;
@@ -46,40 +43,34 @@ type MainContentProps = {
 };
 
 const MainContent = ({
-  imagePath,
+  inputAsset,
   resetImagePaths,
   upscaledBatchFolderPath,
-  setImagePath,
-  validateImagePath,
+  setInputAsset,
+  validateImageAsset,
   selectFolderHandler,
   selectImageHandler,
-  upscaledImagePath,
+  resultAsset,
   batchFolderPath,
   doubleUpscaylCounter,
+  activeJobId,
   setDimensions,
 }: MainContentProps) => {
+  const runtime = useRuntime();
   const t = useTranslation();
   const logit = useLogger();
   const { toast } = useToast();
   const version = useUpscaylVersion();
 
-  const [outputPath, setOutputPath] = useAtom(savedOutputPathAtom);
   const progress = useAtomValue(progressAtom);
   const batchMode = useAtomValue(batchModeAtom);
 
   const viewType = useAtomValue(viewTypeAtom);
-  const lensSize = useAtomValue(lensSizeAtom);
-  const rememberOutputFolder = useAtomValue(rememberOutputFolderAtom);
   const [zoomAmount, setZoomAmount] = useState("100");
-
-  const sanitizedUpscaledImagePath = useMemo(
-    () => sanitizePath(upscaledImagePath),
-    [upscaledImagePath],
-  );
 
   const showInformationCard = useMemo(() => {
     if (!batchMode) {
-      return imagePath.length === 0 && upscaledImagePath.length === 0;
+      return !inputAsset && !resultAsset;
     } else {
       return (
         batchFolderPath.length === 0 && upscaledBatchFolderPath.length === 0
@@ -87,8 +78,8 @@ const MainContent = ({
     }
   }, [
     batchMode,
-    imagePath,
-    upscaledImagePath,
+    inputAsset,
+    resultAsset,
     batchFolderPath,
     upscaledBatchFolderPath,
   ]);
@@ -116,12 +107,7 @@ const MainContent = ({
     );
   };
 
-  const sanitizedImagePath = useMemo(
-    () => sanitizePath(imagePath),
-    [imagePath],
-  );
-
-  const handleDrop = (e) => {
+  const handleDrop = async (e) => {
     e.preventDefault();
     resetImagePaths();
     if (
@@ -136,12 +122,16 @@ const MainContent = ({
       return;
     }
     const type = e.dataTransfer.items[0].type;
-    const filePath = e.dataTransfer.files[0].path;
-    const extension = e.dataTransfer.files[0].name.split(".").at(-1);
-    logit("⤵️ Dropped file: ", JSON.stringify({ type, filePath, extension }));
+    const file = e.dataTransfer.files[0];
+    const extension = file.name.split(".").at(-1)?.toLowerCase();
+    logit(
+      "⤵️ Dropped file: ",
+      JSON.stringify({ type, name: file.name, extension }),
+    );
     if (
       !type.includes("image") ||
-      !VALID_IMAGE_FORMATS.includes(extension.toLowerCase())
+      !extension ||
+      !VALID_IMAGE_FORMATS.includes(extension as ImageFormat)
     ) {
       logit("🚫 Invalid file dropped");
       toast({
@@ -149,121 +139,50 @@ const MainContent = ({
         description: t("ERRORS.INVALID_IMAGE_ERROR.ADDITIONAL_DESCRIPTION"),
       });
     } else {
-      logit("🖼 Setting image path: ", filePath);
-      setImagePath(filePath);
-      const dirname = getDirectoryFromPath(filePath);
-      logit("🗂 Setting output path: ", dirname);
-      if (!FEATURE_FLAGS.APP_STORE_BUILD) {
-        if (!rememberOutputFolder) {
-          setOutputPath(dirname);
-        }
+      try {
+        const asset = await runtime.importImage(file);
+        logit("🖼 Imported image asset: ", asset.name);
+        setInputAsset(asset);
+        validateImageAsset(asset);
+      } catch (error) {
+        toast({
+          title: t("ERRORS.INVALID_IMAGE_ERROR.TITLE"),
+          description: error instanceof Error ? error.message : String(error),
+        });
       }
-      validateImagePath(filePath);
     }
   };
 
-  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+  const handlePaste = async (e: React.ClipboardEvent<HTMLDivElement>) => {
     e.preventDefault();
-    if (outputPath) {
-      resetImagePaths();
-      if (e.clipboardData.files.length) {
-        const fileObject = e.clipboardData.files[0];
-        const currentDate = new Date(Date.now());
-        const currentTime = `${currentDate.getHours()}-${currentDate.getMinutes()}-${currentDate.getSeconds()}`;
-        const fileName = `.temp-${currentTime}-${fileObject.name || "image"}`;
-        const file = {
-          name: fileName,
-          path: outputPath,
-          extension: fileName.split(".").pop() as ImageFormat,
-          size: fileObject.size,
-          type: fileObject.type.split("/")[0],
-          encodedBuffer: "",
-        };
-
-        logit(
-          "📋 Pasted file: ",
-          JSON.stringify({
-            name: file.name,
-            path: file.path,
-            extension: file.extension,
-          }),
-        );
-
-        if (
-          file.type === "image" &&
-          VALID_IMAGE_FORMATS.includes(file.extension)
-        ) {
-          const reader = new FileReader();
-          reader.onload = async (event) => {
-            const result = event.target?.result;
-            if (typeof result === "string") {
-              file.encodedBuffer = Buffer.from(result, "utf-8").toString(
-                "base64",
-              );
-            } else if (result instanceof ArrayBuffer) {
-              file.encodedBuffer = Buffer.from(new Uint8Array(result)).toString(
-                "base64",
-              );
-            } else {
-              logit("🚫 Invalid file pasted");
-              toast({
-                title: t("ERRORS.INVALID_IMAGE_ERROR.TITLE"),
-                description: t(
-                  "ERRORS.INVALID_IMAGE_ERROR.CLIPBOARD_DESCRIPTION",
-                ),
-              });
-            }
-            window.electron.send(ELECTRON_COMMANDS.PASTE_IMAGE, file);
-          };
-          reader.readAsArrayBuffer(fileObject);
-        } else {
-          logit("🚫 Invalid file pasted");
-          toast({
-            title: t("ERRORS.INVALID_IMAGE_ERROR.TITLE"),
-            description: t("ERRORS.INVALID_IMAGE_ERROR.CLIPBOARD_DESCRIPTION"),
-          });
-        }
-      } else {
-        logit("🚫 Invalid file pasted");
-        toast({
-          title: t("ERRORS.INVALID_IMAGE_ERROR.TITLE"),
-          description: t("ERRORS.INVALID_IMAGE_ERROR.CLIPBOARD_DESCRIPTION"),
-        });
-      }
-    } else {
+    resetImagePaths();
+    const file = e.clipboardData.files[0];
+    if (!file || !file.type.startsWith("image/")) {
       toast({
-        title: t("ERRORS.NO_OUTPUT_FOLDER_ERROR.TITLE"),
-        description: t("ERRORS.NO_OUTPUT_FOLDER_ERROR.DESCRIPTION"),
+        title: t("ERRORS.INVALID_IMAGE_ERROR.TITLE"),
+        description: t("ERRORS.INVALID_IMAGE_ERROR.CLIPBOARD_DESCRIPTION"),
+      });
+      return;
+    }
+    try {
+      const asset = await runtime.importImage(file);
+      setInputAsset(asset);
+      validateImageAsset(asset);
+    } catch (error) {
+      toast({
+        title: t("ERRORS.NO_IMAGE_ERROR.TITLE"),
+        description: error instanceof Error ? error.message : String(error),
       });
     }
   };
 
   useEffect(() => {
-    // Events
     const handlePasteEvent = (e) => handlePaste(e);
-    const handlePasteImageSaveSuccess = (_: any, imageFilePath: string) => {
-      setImagePath(imageFilePath);
-      validateImagePath(imageFilePath);
-    };
-    const handlePasteImageSaveError = (_: any, error: string) => {
-      toast({
-        title: t("ERRORS.NO_IMAGE_ERROR.TITLE"),
-        description: error,
-      });
-    };
     window.addEventListener("paste", handlePasteEvent);
-    window.electron.on(
-      ELECTRON_COMMANDS.PASTE_IMAGE_SAVE_SUCCESS,
-      handlePasteImageSaveSuccess,
-    );
-    window.electron.on(
-      ELECTRON_COMMANDS.PASTE_IMAGE_SAVE_ERROR,
-      handlePasteImageSaveError,
-    );
     return () => {
       window.removeEventListener("paste", handlePasteEvent);
     };
-  }, [t, outputPath]);
+  }, [t, runtime]);
 
   return (
     <div
@@ -277,13 +196,14 @@ const MainContent = ({
       <MacTitlebarDragRegion />
 
       {progress.length > 0 &&
-        upscaledImagePath.length === 0 &&
+        !resultAsset &&
         upscaledBatchFolderPath.length === 0 && (
           <ProgressBar
             batchMode={batchMode}
             progress={progress}
             doubleUpscaylCounter={doubleUpscaylCounter}
             resetImagePaths={resetImagePaths}
+            jobId={activeJobId}
           />
         )}
 
@@ -299,8 +219,11 @@ const MainContent = ({
       />
 
       {/* SHOW SELECTED IMAGE */}
-      {!batchMode && upscaledImagePath.length === 0 && imagePath.length > 0 && (
-        <ImageViewer imagePath={imagePath} setDimensions={setDimensions} />
+      {!batchMode && !resultAsset && inputAsset && (
+        <ImageViewer
+          imageUrl={inputAsset.previewUrl}
+          setDimensions={setDimensions}
+        />
       )}
 
       {/* BATCH UPSCALE SHOW SELECTED FOLDER */}
@@ -330,21 +253,33 @@ const MainContent = ({
         </div>
       )}
 
-      {!batchMode && viewType === "lens" && upscaledImagePath && imagePath && (
+      {!batchMode && viewType === "lens" && resultAsset && inputAsset && (
         <LensViewer
-          sanitizedImagePath={sanitizedImagePath}
-          sanitizedUpscaledImagePath={sanitizedUpscaledImagePath}
+          imageUrl={inputAsset.previewUrl}
+          upscaledImageUrl={resultAsset.previewUrl}
         />
       )}
+
+      {!batchMode &&
+        resultAsset?.downloadUrl &&
+        runtime.capabilities.canDownloadResult && (
+          <a
+            className="btn btn-primary absolute bottom-6 right-6 z-50"
+            href={resultAsset.downloadUrl}
+            download={resultAsset.name}
+          >
+            Download
+          </a>
+        )}
 
       {/* COMPARISON SLIDER */}
       {!batchMode &&
         viewType === "slider" &&
-        imagePath.length > 0 &&
-        upscaledImagePath.length > 0 && (
+        inputAsset &&
+        resultAsset && (
           <SliderView
-            sanitizedImagePath={sanitizedImagePath}
-            sanitizedUpscaledImagePath={sanitizedUpscaledImagePath}
+            imageUrl={inputAsset.previewUrl}
+            upscaledImageUrl={resultAsset.previewUrl}
             zoomAmount={zoomAmount}
           />
         )}

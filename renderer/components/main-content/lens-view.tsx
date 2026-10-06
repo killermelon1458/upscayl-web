@@ -1,11 +1,11 @@
 import React, { useMemo, useRef, useState } from "react";
 
 const LensViewer = ({
-  sanitizedImagePath,
-  sanitizedUpscaledImagePath,
+  imageUrl,
+  upscaledImageUrl,
 }: {
-  sanitizedImagePath: string;
-  sanitizedUpscaledImagePath: string;
+  imageUrl: string;
+  upscaledImageUrl: string;
 }) => {
   const originalImageContainerRef = useRef<HTMLDivElement>(null);
   const originalImageRef = useRef<HTMLImageElement>(null);
@@ -90,14 +90,8 @@ const LensViewer = ({
     });
   };
 
-  const originalImage = useMemo(
-    () => "file:///" + sanitizedImagePath,
-    [sanitizedImagePath],
-  );
-  const upscaledImage = useMemo(
-    () => "file:///" + sanitizedUpscaledImagePath,
-    [sanitizedUpscaledImagePath],
-  );
+  const originalImage = useMemo(() => imageUrl, [imageUrl]);
+  const upscaledImage = useMemo(() => upscaledImageUrl, [upscaledImageUrl]);
 
   return (
     <div className="group relative flex h-full flex-col items-center">
