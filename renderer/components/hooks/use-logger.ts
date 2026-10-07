@@ -1,12 +1,13 @@
 import { logAtom } from "../../atoms/log-atom";
-import log from "electron-log/renderer";
 import { useSetAtom } from "jotai";
+import { useRuntime } from "@/runtime/runtime-context";
 
 const useLogger = () => {
   const setLogData = useSetAtom(logAtom);
+  const runtime = useRuntime();
 
   const logit = (...args: any) => {
-    log.log(...args);
+    runtime.log(...args);
 
     const data = [...args].join(" ");
     setLogData((prevLogData) => [...prevLogData, data]);

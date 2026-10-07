@@ -13,6 +13,7 @@ const MyApp = ({ Component, pageProps }: AppProps) => {
     <>
       <Head>
         <title>Upscayl</title>
+        <link rel="icon" href="icon.png" />
       </Head>
       <base href="./" />
 

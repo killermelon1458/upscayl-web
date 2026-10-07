@@ -4,6 +4,8 @@ export type ImageAsset = {
   id: string;
   name: string;
   previewUrl: string;
+  width?: number;
+  height?: number;
 };
 
 export type ResultAsset = ImageAsset & {
@@ -80,6 +82,7 @@ export type SystemInfo = {
 export interface UpscaylRuntime {
   readonly capabilities: RuntimeCapabilities;
 
+  log(...args: unknown[]): void;
   selectImage(): Promise<ImageAsset | null>;
   importImage(file: File): Promise<ImageAsset>;
   listModels(): Promise<string[]>;

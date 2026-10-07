@@ -5,15 +5,17 @@ import React, { useEffect } from "react";
 type LogAreaProps = {
   copyOnClickHandler: () => void;
   isCopied: boolean;
+  copyFailed?: boolean;
   logData: string[];
 };
 
 export function LogArea({
   copyOnClickHandler,
   isCopied,
+  copyFailed,
   logData,
 }: LogAreaProps) {
-  const ref = React.useRef<HTMLElement>(null);
+  const ref = React.useRef<HTMLTextAreaElement>(null);
   const t = useAtomValue(translationAtom);
 
   useEffect(() => {
@@ -34,20 +36,21 @@ export function LogArea({
           )}
         </button>
       </div>
-      <code
-        className="relative flex h-52 max-h-52 flex-col gap-3 overflow-y-auto break-all rounded-btn rounded-r-none bg-base-200 p-4 text-xs"
+      {copyFailed && (
+        <p role="status" className="text-sm">
+          Automatic copying failed. Select the logs below and copy them
+          manually.
+        </p>
+      )}
+      <textarea
+        aria-label="Logs"
+        readOnly
+        value={logData.join("\n")}
+        placeholder={t("SETTINGS.LOG_AREA.NO_LOGS")}
+        onFocus={(event) => event.currentTarget.select()}
+        className="relative h-52 max-h-52 w-full overflow-y-auto rounded-btn rounded-r-none bg-base-200 p-4 text-xs"
         ref={ref}
-      >
-        {logData.length === 0 && (
-          <p className="text-base-content/70">
-            {t("SETTINGS.LOG_AREA.NO_LOGS")}
-          </p>
-        )}
-
-        {logData.map((logLine: any) => {
-          return <p className="">{logLine}</p>;
-        })}
-      </code>
+      />
     </div>
   );
 }

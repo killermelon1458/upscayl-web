@@ -5,6 +5,10 @@ import { createServer, IncomingMessage, ServerResponse } from "http";
 import os from "os";
 import path from "path";
 import { randomUUID } from "crypto";
+import { createInterface } from "readline";
+import { imageDimensions } from "./image-dimensions";
+import { outputSizeWarning } from "../../common/output-size";
+import { backendFailure } from "./job-diagnostics";
 import { MODELS } from "../../common/models-list";
 import { imageFormats, ImageFormat } from "../../common/image-formats";
 import { buildSingleImageArguments } from "../../common/upscayl-arguments";
@@ -40,6 +44,10 @@ type StoredJob = {
   events: Array<{ id: number; event: JobEvent }>;
   subscribers: Set<ServerResponse>;
   nextEventId: number;
+  diagnostics: string[];
+  reportedError?: string;
+  exitCode?: number | null;
+  exitSignal?: NodeJS.Signals | null;
 };
 
 type InputExtension = "png" | "jpg" | "jpeg" | "jfif" | "webp";
@@ -361,6 +369,8 @@ export class UpscaylWebServer {
       "assets",
       `${id}.${extension}`,
     );
+    // Header metadata only; do not decode/allocate the full pixel image.
+    const dimensions = imageDimensions(data, extension);
     await writeFile(assetPath, data, { flag: "wx" });
     const asset: StoredAsset = {
       id,
@@ -369,6 +379,8 @@ export class UpscaylWebServer {
       path: assetPath,
       extension,
       mimeType,
+      width: dimensions?.width,
+      height: dimensions?.height,
     };
     this.assets.set(id, asset);
     return json(response, 201, this.publicAsset(asset));
@@ -411,9 +423,14 @@ export class UpscaylWebServer {
         events: [],
         subscribers: new Set(),
         nextEventId: 1,
+        diagnostics: [],
       };
       this.jobs.set(id, job);
       this.activeJobId = id;
+      const context = `Job ${id}: model=${validated.model}, scale=${validated.scale}x, input=${input.width && input.height ? `${input.width}x${input.height}` : "dimensions unavailable"}, format=${validated.saveImageAs}${validated.useCustomWidth ? `, custom width=${validated.customWidth}` : ""}.`;
+      this.recordDiagnostic(job, context);
+      const warning = outputSizeWarning(input, validated);
+      if (warning) this.emit(job, { type: "warning", message: warning });
 
       const args = buildSingleImageArguments({
         inputPath: input.path,
@@ -437,23 +454,28 @@ export class UpscaylWebServer {
       job.process = child;
       this.emit(job, { type: "started" });
 
-      child.stderr.on("data", (data: Buffer) => {
-        const events = parseBackendOutput(data.toString()).map((event) =>
+      createInterface({ input: child.stderr }).on("line", (line) => {
+        this.recordDiagnostic(
+          job,
+          `stderr: ${this.redact(line, input.path, resultPath)}`,
+        );
+        const events = parseBackendOutput(line).map((event) =>
           this.redactEvent(event, input.path, resultPath),
         );
-        events.forEach((event) => this.emit(job, event));
-        if (events.some((event) => event.type === "error")) {
-          job.status = "error";
-          child.kill();
-        }
+        events.forEach((event) => {
+          if (event.type === "error") {
+            job.reportedError = event.message;
+            // Wait for close to deliver a single final error with exit status.
+          } else if (event.type !== "log") this.emit(job, event);
+        });
       });
-      child.stdout.on("data", (data: Buffer) => {
-        const message = this.redact(
-          data.toString().trim(),
-          input.path,
-          resultPath,
-        );
-        if (message) this.emit(job, { type: "log", message });
+      createInterface({ input: child.stdout }).on("line", (line) => {
+        const message = this.redact(line.trim(), input.path, resultPath);
+        if (message) {
+          this.recordDiagnostic(job, `stdout: ${message}`);
+          if (/error|failed|out of memory|bad_alloc/i.test(message))
+            job.reportedError = message;
+        }
       });
       child.on("error", (error) => {
         if (job.status === "error") return;
@@ -463,7 +485,7 @@ export class UpscaylWebServer {
             ? "The Upscayl backend executable was not found."
             : "The Upscayl backend could not be started.";
         this.emit(job, { type: "error", message: job.error });
-        this.finishJob(job);
+        // close follows error; retain process ownership until then.
       });
       child.on("close", (code, signal) => {
         void this.finishProcess(job, resultPath, resultName, code, signal);
@@ -502,8 +524,13 @@ export class UpscaylWebServer {
         "The selected model is not available.",
       );
     }
-    if (!(["2", "3", "4"] as string[]).includes(value.scale)) {
-      throw new HttpError(400, "invalid-scale", "Scale must be 2, 3, or 4.");
+    const scale = Number(value.scale);
+    if (!Number.isInteger(scale) || scale < 1 || scale > 16) {
+      throw new HttpError(
+        400,
+        "invalid-scale",
+        "Scale must be an integer between 1 and 16.",
+      );
     }
     if (!(imageFormats as readonly string[]).includes(value.saveImageAs)) {
       throw new HttpError(
@@ -598,6 +625,12 @@ export class UpscaylWebServer {
     signal: NodeJS.Signals | null,
   ) {
     if (job.cancellationTimer) clearTimeout(job.cancellationTimer);
+    job.exitCode = code;
+    job.exitSignal = signal;
+    this.recordDiagnostic(
+      job,
+      `Backend exit: code=${code ?? "none"}, signal=${signal ?? "none"}.`,
+    );
     if (job.status === "cancelling") {
       job.status = "cancelled";
       this.emit(job, { type: "cancelled" });
@@ -608,9 +641,13 @@ export class UpscaylWebServer {
       this.finishJob(job);
       return;
     }
-    if (code !== 0) {
+    if (code !== 0 || job.reportedError) {
       job.status = "error";
-      job.error = `The Upscayl backend exited unsuccessfully${signal ? ` (${signal})` : ""}.`;
+      job.error = backendFailure(
+        code,
+        signal,
+        job.reportedError || job.diagnostics.slice(-5).join("\n"),
+      );
       this.emit(job, { type: "error", message: job.error });
       this.finishJob(job);
       return;
@@ -706,6 +743,8 @@ export class UpscaylWebServer {
   private emit(job: StoredJob, event: JobEvent) {
     const entry = { id: job.nextEventId++, event };
     job.events.push(entry);
+    // Bound replay as well as diagnostics; active SSE subscribers still receive all events.
+    if (job.events.length > 256) job.events.shift();
     job.subscribers.forEach((subscriber) => this.writeEvent(subscriber, entry));
   }
 
@@ -740,11 +779,20 @@ export class UpscaylWebServer {
       status: job.status,
       result: job.result ? this.publicResult(job.result) : undefined,
       error: job.error,
+      exitCode: job.exitCode,
+      exitSignal: job.exitSignal,
+      diagnostics: job.diagnostics,
     };
   }
 
   private publicAsset(asset: StoredAsset): ImageAsset {
-    return { id: asset.id, name: asset.name, previewUrl: asset.previewUrl };
+    return {
+      id: asset.id,
+      name: asset.name,
+      previewUrl: asset.previewUrl,
+      width: asset.width,
+      height: asset.height,
+    };
   }
 
   private publicResult(result: NonNullable<StoredJob["result"]>): ResultAsset {
@@ -773,7 +821,21 @@ export class UpscaylWebServer {
       .split(outputPath)
       .join("[result image]")
       .split(this.config.modelsPath)
-      .join("[models]");
+      .join("[models]")
+      .split(this.config.backendPath)
+      .join("[backend]")
+      .split(this.config.dataRoot)
+      .join("[storage]")
+      .replace(/(?:\/[^\s"'<>:]+){2,}/g, "[server path]");
+  }
+
+  private recordDiagnostic(job: StoredJob, message: string) {
+    const bounded = message.slice(0, 2000);
+    job.diagnostics.push(bounded);
+    // At most 64 KiB per job, apart from existing SSE replay history.
+    while (Buffer.byteLength(job.diagnostics.join("\n"), "utf8") > 65536)
+      job.diagnostics.shift();
+    this.emit(job, { type: "log", message: bounded });
   }
 
   private redactEvent(

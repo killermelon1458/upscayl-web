@@ -27,6 +27,7 @@ import TTAModeToggle from "./tta-mode-toggle";
 import SystemInfo from "./system-info";
 import CopyMetadataToggle from "./copy-metadata-toggle";
 import { useRuntime } from "@/runtime/runtime-context";
+import { copyText } from "@/lib/copy-text";
 
 interface IProps {
   batchMode: boolean;
@@ -57,6 +58,7 @@ function SettingsTab({
 }: IProps) {
   const runtime = useRuntime();
   const [isCopied, setIsCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
 
   const [customModelsPath, setCustomModelsPath] = useAtom(customModelsPathAtom);
   const [scale, setScale] = useAtom(scaleAtom);
@@ -78,9 +80,10 @@ function SettingsTab({
     localStorage.setItem("gpuId", e.target.value);
   };
 
-  const copyOnClickHandler = () => {
-    navigator.clipboard.writeText(logData.join("\n"));
-    setIsCopied(true);
+  const copyOnClickHandler = async () => {
+    const copied = await copyText(logData.join("\n"));
+    setIsCopied(copied);
+    setCopyFailed(!copied);
     setTimeout(() => {
       setIsCopied(false);
     }, 2000);
@@ -164,6 +167,7 @@ function SettingsTab({
       </div>
 
       <LogArea
+        copyFailed={copyFailed}
         copyOnClickHandler={copyOnClickHandler}
         isCopied={isCopied}
         logData={logData}
@@ -180,7 +184,7 @@ function SettingsTab({
         saveImageAs={saveImageAs}
         setExportType={setExportType}
       />
-      
+
       {/* COPY METADATA TOGGLE */}
       <CopyMetadataToggle saveImageAs={saveImageAs} setExportType={setExportType} />
 

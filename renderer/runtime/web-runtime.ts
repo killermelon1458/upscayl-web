@@ -6,6 +6,7 @@ import {
   UpscaleRequest,
   UpscaylRuntime,
 } from "@common/types/runtime";
+import { outputSizeWarning } from "@common/output-size";
 
 type ApiErrorBody = { error?: { code?: string; message?: string } };
 
@@ -31,6 +32,7 @@ const withAbsoluteAssetUrls = <T extends ImageAsset & { downloadUrl?: string }>(
 });
 
 export class WebRuntime implements UpscaylRuntime {
+  private assets = new Map<string, ImageAsset>();
   readonly capabilities = {
     canSelectOutputTarget: false,
     requiresOutputTarget: false,
@@ -44,6 +46,10 @@ export class WebRuntime implements UpscaylRuntime {
     supportsDoubleUpscale: false,
     supportsCustomModels: false,
   };
+
+  log(...args: unknown[]) {
+    console.log(...args);
+  }
 
   selectImage(): Promise<ImageAsset | null> {
     return new Promise((resolve, reject) => {
@@ -90,6 +96,7 @@ export class WebRuntime implements UpscaylRuntime {
       body: file,
     });
     const asset = await readResponse<ImageAsset>(response);
+    this.assets.set(asset.id, asset);
     return withAbsoluteAssetUrls(asset);
   }
 
@@ -100,6 +107,13 @@ export class WebRuntime implements UpscaylRuntime {
   }
 
   async startJob(request: UpscaleRequest): Promise<JobInfo> {
+    const asset = this.assets.get(request.input.assetId);
+    const warning = asset && outputSizeWarning(asset, request);
+    if (warning && !window.confirm(`${warning}\n\nContinue processing?`)) {
+      throw new Error(
+        "Processing was not started: large-output warning declined.",
+      );
+    }
     const response = await fetch("/api/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

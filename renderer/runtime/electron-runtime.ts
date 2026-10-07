@@ -13,6 +13,7 @@ import {
   UpscaylRuntime,
 } from "@common/types/runtime";
 import { ImageUpscaylPayload } from "@common/types/types";
+import log from "electron-log/renderer";
 import {
   getBackendErrorCode,
   parseBackendOutput,
@@ -57,6 +58,10 @@ export class ElectronRuntime implements UpscaylRuntime {
 
   constructor() {
     this.registerJobEventAdapters();
+  }
+
+  log(...args: unknown[]) {
+    log.log(...args);
   }
 
   async selectImage(): Promise<ImageAsset | null> {

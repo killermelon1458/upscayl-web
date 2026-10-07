@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -62,6 +63,9 @@ const SelectModelDialog = () => {
         <DialogContent className="z-50 sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{t("APP.MODEL_SELECTION.DESCRIPTION")}</DialogTitle>
+            <DialogDescription className="sr-only">
+              {t("APP.MODEL_SELECTION.DESCRIPTION")}
+            </DialogDescription>
           </DialogHeader>
           <ScrollArea className="max-h-[600px] pr-4">
             <div className="flex flex-col gap-4">

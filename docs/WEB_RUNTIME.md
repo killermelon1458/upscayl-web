@@ -43,6 +43,16 @@ npm run web:start
 
 Relative configured paths are resolved against the process working directory. Uploaded filenames are retained only as display/download metadata; storage paths use server-generated IDs.
 
+## Logs and large outputs
+
+Settings → Copy Logs uses the Clipboard API when available, then attempts a browser copy fallback (including on LAN HTTP). If neither works, the logs remain in a selectable read-only text area with a failure message. Success is displayed only after a copy operation succeeds.
+
+Web jobs record the model, scale, input dimensions when header metadata is available, output format/custom width, stdout/stderr, and backend exit code or signal. A redacted diagnostic tail (up to 64 KiB, with individual entries capped at 2,000 characters) is available in the existing job-status endpoint and streamed to the renderer logs. SSE replay is limited to the latest 256 events. These records remain in memory and disappear on restart; they are not persistent job history.
+
+The browser asks for confirmation before starting an output estimated to need at least 1 GiB for one uncompressed RGBA buffer. This is an advisory threshold, not a resolution limit or a prediction of total host/GPU memory requirements. For example, 4000 × 3000 at 16× requests 64,000 × 48,000 pixels and about 11.4 GiB for one such buffer. Backend processing may need substantially more memory, and individual image encoders may have their own limits. Lower scale or custom width can reduce final-output memory; a smaller tile size primarily helps inference memory.
+
+An exit signal does not by itself identify the cause. `SIGSEGV` means a backend crash, while `SIGKILL` can indicate memory pressure or an external termination. Explicit backend memory/dimension messages are retained where provided; neither signal is reported as proof of an out-of-memory failure.
+
 ## Prototype limitations
 
 - Jobs and asset metadata are held in memory, so a server restart makes existing stored files inaccessible through the API.

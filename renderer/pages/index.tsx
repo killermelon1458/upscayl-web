@@ -326,6 +326,7 @@ const Home = () => {
             : t("APP.PROGRESS.SCALING_CONVERTING_TITLE"),
         );
       } else if (event.type === "warning") {
+        logit("Job warning:", event.message);
         toast({
           title:
             event.code === "metadata"
@@ -334,6 +335,7 @@ const Home = () => {
           description: event.message,
         });
       } else if (event.type === "error") {
+        logit("Job failed:", event.message);
         const handled = handleErrors(event.message, event.code);
         if (!handled) {
           toast({
