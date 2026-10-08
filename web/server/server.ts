@@ -20,9 +20,12 @@ import {
   ResultAsset,
   SystemInfo,
   UpscaleRequest,
+  BatchRequest,
 } from "../../common/types/runtime";
 import { copyMetadata } from "../../electron/utils/copy-metadata";
 import { WebServerConfig } from "./config";
+import { BatchManager } from "./batches";
+import { streamBatchZip } from "./batch-zip";
 
 type StoredAsset = ImageAsset & {
   path: string;
@@ -48,6 +51,9 @@ type StoredJob = {
   reportedError?: string;
   exitCode?: number | null;
   exitSignal?: NodeJS.Signals | null;
+  onEvent?: (event: JobEvent) => void;
+  completion: Promise<void>;
+  resolveCompletion: () => void;
 };
 
 type InputExtension = "png" | "jpg" | "jpeg" | "jfif" | "webp";
@@ -209,6 +215,24 @@ const safeName = (name: string) =>
   path.basename(name).replace(/[^a-zA-Z0-9._ -]/g, "_");
 
 export class UpscaylWebServer {
+  private batches = new BatchManager({
+    start: async (request, onEvent) => {
+      const job = await this.startProcessing(request, onEvent);
+      return {
+        id: job.id,
+        finished: job.completion.then(() => ({
+          status: job.status,
+          error: job.error,
+          result: job.result ? this.publicResult(job.result) : undefined,
+        })),
+      };
+    },
+    cancel: (id) => {
+      const job = this.requireJob(id);
+      // A result may finish before the batch's awaiting continuation updates its item.
+      if (job.status === "started") this.cancelProcessing(job);
+    },
+  });
   private readonly assets = new Map<string, StoredAsset>();
   private readonly jobs = new Map<string, StoredJob>();
   private activeJobId: string | null = null;
@@ -269,6 +293,82 @@ export class UpscaylWebServer {
     }
     if (request.method === "POST" && pathname === "/api/jobs") {
       return this.createJob(request, response);
+    }
+    if (request.method === "POST" && pathname === "/api/batches") {
+      return this.createBatch(request, response);
+    }
+    const batchMatch = pathname.match(
+      /^\/api\/batches\/([0-9a-f-]+)(?:\/(events|cancel|retry|download))?$/,
+    );
+    if (batchMatch) {
+      const batch = this.batches.get(batchMatch[1]);
+      if (!batch)
+        throw new HttpError(
+          404,
+          "missing-batch",
+          "The batch was not found or has expired.",
+        );
+      const action = batchMatch[2];
+      if (request.method === "GET" && !action)
+        return json(response, 200, this.batches.snapshot(batch));
+      if (request.method === "GET" && action === "events")
+        return this.batches.subscribe(batch, response);
+      if (request.method === "POST" && action === "cancel") {
+        this.batches.cancel(batch);
+        return json(response, 202, this.batches.snapshot(batch));
+      }
+      if (request.method === "POST" && action === "retry") {
+        this.assertIdle();
+        this.creatingJob = true;
+        try {
+          const body = (await readJson(request)) as { itemIds?: string[] };
+          const ids = body?.itemIds;
+          if (
+            !Array.isArray(ids) ||
+            !ids.length ||
+            ids.length > batch.items.length ||
+            ids.some(
+              (id) =>
+                !batch.items.some(
+                  (item) =>
+                    item.id === id &&
+                    ["failed", "cancelled"].includes(item.status),
+                ),
+            )
+          ) {
+            throw new HttpError(
+              400,
+              "invalid-retry",
+              "Select failed or cancelled batch items to retry.",
+            );
+          }
+          await this.validateResources(batch.settings.model);
+          return json(response, 202, this.batches.retry(batch, ids));
+        } finally {
+          this.creatingJob = false;
+        }
+      }
+      if (request.method === "GET" && action === "download") {
+        if (["running", "cancelling"].includes(batch.status))
+          throw new HttpError(
+            409,
+            "batch-running",
+            "Wait until this batch stops before downloading all results.",
+          );
+        const outputs = batch.items
+          .filter((item) => item.status === "complete" && item.jobId)
+          .map((item) => this.requireJob(item.jobId!).result)
+          .filter(
+            (result): result is NonNullable<StoredJob["result"]> => !!result,
+          );
+        if (!outputs.length)
+          throw new HttpError(
+            404,
+            "missing-results",
+            "This batch has no successful results to download.",
+          );
+        return streamBatchZip(response, outputs, batch.id);
+      }
     }
 
     const assetMatch = pathname.match(/^\/api\/assets\/([0-9a-f-]+)$/);
@@ -387,115 +487,178 @@ export class UpscaylWebServer {
   }
 
   private async createJob(request: IncomingMessage, response: ServerResponse) {
-    if (this.activeJobId || this.creatingJob) {
+    this.assertIdle();
+    this.creatingJob = true;
+    try {
+      const validated = this.validateRequest(
+        (await readJson(request)) as UpscaleRequest,
+      );
+      await this.validateResources(validated.model);
+      const job = await this.startProcessing(validated);
+      const info: JobInfo = { id: job.id, status: "started" };
+      return json(response, 201, info);
+    } finally {
+      this.creatingJob = false;
+    }
+  }
+
+  private assertIdle() {
+    if (this.activeJobId || this.creatingJob || this.batches.runningId) {
       throw new HttpError(
         409,
         "server-busy",
         "The GPU is already processing another job.",
       );
     }
+  }
+
+  private async createBatch(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ) {
+    this.assertIdle();
     this.creatingJob = true;
     try {
-      const body = (await readJson(request)) as UpscaleRequest;
-      const validated = this.validateRequest(body);
-      const input = this.assets.get(validated.input.assetId);
-      if (!input)
+      const body = (await readJson(request)) as BatchRequest;
+      if (
+        !body ||
+        !Array.isArray(body.assetIds) ||
+        !body.assetIds.length ||
+        body.assetIds.length > 100 ||
+        new Set(body.assetIds).size !== body.assetIds.length
+      ) {
         throw new HttpError(
-          404,
-          "missing-asset",
-          "The input image was not found or has expired.",
+          400,
+          "invalid-batch",
+          "Select between 1 and 100 distinct uploaded images.",
         );
-
-      await this.validateResources(validated.model);
-      const id = randomUUID();
-      const jobDirectory = path.join(this.config.dataRoot, "jobs", id);
-      await mkdir(jobDirectory, { recursive: false });
-      const resultName = this.resultName(input.name, validated);
-      const resultPath = path.join(
-        jobDirectory,
-        `result.${validated.saveImageAs}`,
-      );
-      const job: StoredJob = {
-        id,
-        status: "started",
-        input,
-        request: validated,
-        events: [],
-        subscribers: new Set(),
-        nextEventId: 1,
-        diagnostics: [],
-      };
-      this.jobs.set(id, job);
-      this.activeJobId = id;
-      const context = `Job ${id}: model=${validated.model}, scale=${validated.scale}x, input=${input.width && input.height ? `${input.width}x${input.height}` : "dimensions unavailable"}, format=${validated.saveImageAs}${validated.useCustomWidth ? `, custom width=${validated.customWidth}` : ""}.`;
-      this.recordDiagnostic(job, context);
-      const warning = outputSizeWarning(input, validated);
-      if (warning) this.emit(job, { type: "warning", message: warning });
-
-      const args = buildSingleImageArguments({
-        inputPath: input.path,
-        outputPath: resultPath,
-        modelsPath: this.config.modelsPath,
-        model: validated.model,
-        scale: validated.scale,
-        gpuId: validated.gpuId,
-        saveImageAs: validated.saveImageAs,
-        customWidth: validated.useCustomWidth ? validated.customWidth : "",
-        tileSize: validated.tileSize || 0,
-        compression: validated.compression,
-        ttaMode: validated.ttaMode,
+      }
+      const inputs = body.assetIds.map((id) => {
+        const asset = this.assets.get(id);
+        if (!asset)
+          throw new HttpError(
+            404,
+            "missing-asset",
+            "An uploaded image was not found or has expired.",
+          );
+        return this.publicAsset(asset);
       });
-
-      const child = spawn(this.config.backendPath, args, {
-        shell: false,
-        detached: false,
-        stdio: ["ignore", "pipe", "pipe"],
+      const { input, ...settings } = this.validateRequest({
+        ...body.settings,
+        input: { type: "image", assetId: body.assetIds[0] },
       });
-      job.process = child;
-      this.emit(job, { type: "started" });
-
-      createInterface({ input: child.stderr }).on("line", (line) => {
-        this.recordDiagnostic(
-          job,
-          `stderr: ${this.redact(line, input.path, resultPath)}`,
-        );
-        const events = parseBackendOutput(line).map((event) =>
-          this.redactEvent(event, input.path, resultPath),
-        );
-        events.forEach((event) => {
-          if (event.type === "error") {
-            job.reportedError = event.message;
-            // Wait for close to deliver a single final error with exit status.
-          } else if (event.type !== "log") this.emit(job, event);
-        });
-      });
-      createInterface({ input: child.stdout }).on("line", (line) => {
-        const message = this.redact(line.trim(), input.path, resultPath);
-        if (message) {
-          this.recordDiagnostic(job, `stdout: ${message}`);
-          if (/error|failed|out of memory|bad_alloc/i.test(message))
-            job.reportedError = message;
-        }
-      });
-      child.on("error", (error) => {
-        if (job.status === "error") return;
-        job.status = "error";
-        job.error =
-          (error as NodeJS.ErrnoException).code === "ENOENT"
-            ? "The Upscayl backend executable was not found."
-            : "The Upscayl backend could not be started.";
-        this.emit(job, { type: "error", message: job.error });
-        // close follows error; retain process ownership until then.
-      });
-      child.on("close", (code, signal) => {
-        void this.finishProcess(job, resultPath, resultName, code, signal);
-      });
-
-      const info: JobInfo = { id, status: "started" };
-      return json(response, 201, info);
+      await this.validateResources(settings.model);
+      return json(response, 201, this.batches.create(inputs, settings));
     } finally {
       this.creatingJob = false;
     }
+  }
+
+  private async startProcessing(
+    validated: UpscaleRequest,
+    onEvent?: (event: JobEvent) => void,
+  ): Promise<StoredJob> {
+    const input = this.assets.get(validated.input.assetId);
+    if (!input)
+      throw new HttpError(
+        404,
+        "missing-asset",
+        "The input image was not found or has expired.",
+      );
+
+    await this.validateResources(validated.model);
+    const id = randomUUID();
+    const jobDirectory = path.join(this.config.dataRoot, "jobs", id);
+    await mkdir(jobDirectory, { recursive: false });
+    const resultName = this.resultName(input.name, validated);
+    const resultPath = path.join(
+      jobDirectory,
+      `result.${validated.saveImageAs}`,
+    );
+    let resolveCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const job: StoredJob = {
+      id,
+      status: "started",
+      input,
+      request: validated,
+      events: [],
+      subscribers: new Set(),
+      nextEventId: 1,
+      diagnostics: [],
+      completion,
+      resolveCompletion,
+      onEvent,
+    };
+    this.jobs.set(id, job);
+    this.activeJobId = id;
+    const context = `Job ${id}: model=${validated.model}, scale=${validated.scale}x, input=${input.width && input.height ? `${input.width}x${input.height}` : "dimensions unavailable"}, format=${validated.saveImageAs}${validated.useCustomWidth ? `, custom width=${validated.customWidth}` : ""}.`;
+    this.recordDiagnostic(job, context);
+    const warning = outputSizeWarning(input, validated);
+    if (warning) this.emit(job, { type: "warning", message: warning });
+
+    const args = buildSingleImageArguments({
+      inputPath: input.path,
+      outputPath: resultPath,
+      modelsPath: this.config.modelsPath,
+      model: validated.model,
+      scale: validated.scale,
+      gpuId: validated.gpuId,
+      saveImageAs: validated.saveImageAs,
+      customWidth: validated.useCustomWidth ? validated.customWidth : "",
+      tileSize: validated.tileSize || 0,
+      compression: validated.compression,
+      ttaMode: validated.ttaMode,
+    });
+
+    const child = spawn(this.config.backendPath, args, {
+      shell: false,
+      detached: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    job.process = child;
+    this.emit(job, { type: "started" });
+
+    createInterface({ input: child.stderr }).on("line", (line) => {
+      this.recordDiagnostic(
+        job,
+        `stderr: ${this.redact(line, input.path, resultPath)}`,
+      );
+      const events = parseBackendOutput(line).map((event) =>
+        this.redactEvent(event, input.path, resultPath),
+      );
+      events.forEach((event) => {
+        if (event.type === "error") {
+          job.reportedError = event.message;
+          // Wait for close to deliver a single final error with exit status.
+        } else if (event.type !== "log") this.emit(job, event);
+      });
+    });
+    createInterface({ input: child.stdout }).on("line", (line) => {
+      const message = this.redact(line.trim(), input.path, resultPath);
+      if (message) {
+        this.recordDiagnostic(job, `stdout: ${message}`);
+        if (/error|failed|out of memory|bad_alloc/i.test(message))
+          job.reportedError = message;
+      }
+    });
+    child.on("error", (error) => {
+      if (job.status === "error") return;
+      job.status = "error";
+      job.error =
+        (error as NodeJS.ErrnoException).code === "ENOENT"
+          ? "The Upscayl backend executable was not found."
+          : "The Upscayl backend could not be started.";
+      this.emit(job, { type: "error", message: job.error });
+      // close follows error; retain process ownership until then.
+    });
+    child.on("close", (code, signal) => {
+      void this.finishProcess(job, resultPath, resultName, code, signal);
+    });
+
+    return job;
   }
 
   private validateRequest(value: UpscaleRequest): UpscaleRequest {
@@ -686,6 +849,11 @@ export class UpscaylWebServer {
   }
 
   private cancelJob(response: ServerResponse, job: StoredJob) {
+    this.cancelProcessing(job);
+    return json(response, 202, { id: job.id, status: "cancelling" });
+  }
+
+  private cancelProcessing(job: StoredJob) {
     if (job.status !== "started" || !job.process) {
       throw new HttpError(
         409,
@@ -706,7 +874,6 @@ export class UpscaylWebServer {
     job.cancellationTimer = setTimeout(() => {
       if (job.status === "cancelling") job.process?.kill("SIGKILL");
     }, 5000);
-    return json(response, 202, { id: job.id, status: "cancelling" });
   }
 
   private subscribeToJob(
@@ -741,6 +908,7 @@ export class UpscaylWebServer {
   }
 
   private emit(job: StoredJob, event: JobEvent) {
+    job.onEvent?.(event);
     const entry = { id: job.nextEventId++, event };
     job.events.push(entry);
     // Bound replay as well as diagnostics; active SSE subscribers still receive all events.
@@ -760,6 +928,7 @@ export class UpscaylWebServer {
     job.process = undefined;
     job.subscribers.forEach((subscriber) => subscriber.end());
     job.subscribers.clear();
+    job.resolveCompletion();
   }
 
   private requireJob(id: string) {

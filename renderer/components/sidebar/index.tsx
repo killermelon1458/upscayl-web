@@ -43,6 +43,8 @@ import UpscaylLogo from "./upscayl-logo";
 import SidebarToggleButton from "./sidebar-button";
 import { ImageAsset, JobInfo, ResultAsset } from "@common/types/runtime";
 import { useRuntime } from "@/runtime/runtime-context";
+import { imageBatchModeAtom } from "@/atoms/image-batch-atom";
+import { useImageBatch } from "../hooks/use-image-batch";
 
 const Sidebar = ({
   setResultAsset,
@@ -67,6 +69,8 @@ const Sidebar = ({
   onJobStarted: (job: JobInfo) => void;
 }) => {
   const runtime = useRuntime();
+  const imageBatchMode = useAtomValue(imageBatchModeAtom);
+  const imageBatch = useImageBatch();
   const t = useTranslation();
   const logit = useLogger();
   const { toast } = useToast();
@@ -101,6 +105,10 @@ const Sidebar = ({
   const [copyMetadata] = useAtom(copyMetadataAtom);
 
   const upscaylHandler = async () => {
+    if (imageBatchMode && runtime.batch) {
+      await imageBatch.start();
+      return;
+    }
     logit("🔄 Resetting Upscaled Image Path");
     setResultAsset(null);
     setUpscaledBatchFolderPath("");

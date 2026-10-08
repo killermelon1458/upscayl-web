@@ -60,10 +60,11 @@ const Home = () => {
   const setUserStats = useSetAtom(userStatsAtom);
 
   const selectImageHandler = async () => {
-    resetImagePaths();
+    if (activeJobIdRef.current) return;
     try {
       const asset = await runtime.selectImage();
       if (asset === null) return;
+      resetImagePaths();
       logit("🖼 Selected Image Asset: ", asset.name);
       setInputAsset(asset);
       if (!rememberOutputFolder) {
@@ -150,6 +151,11 @@ const Home = () => {
       });
     } else if (errorCode === "read-write") {
       if (batchMode) return false;
+      if (!runtime.capabilities.canSelectOutputTarget) {
+        toast({ title: t("ERRORS.GENERIC_ERROR.TITLE"), description: data });
+        resetProcessingState();
+        return true;
+      }
       toast({
         title: t("ERRORS.READ_WRITE_ERROR.TITLE"),
         description: t("ERRORS.READ_WRITE_ERROR.DESCRIPTION", { data }),
@@ -185,7 +191,7 @@ const Home = () => {
       return false;
     }
 
-    resetImagePaths();
+    resetProcessingState();
     return true;
   };
 
@@ -228,7 +234,7 @@ const Home = () => {
         title: t("ERRORS.GENERIC_ERROR.TITLE"),
         description: data,
       });
-      resetImagePaths();
+      resetProcessingState();
     });
     // FOLDER UPSCAYL PROGRESS
     window.electron.on(
@@ -342,7 +348,7 @@ const Home = () => {
             title: t("ERRORS.GENERIC_ERROR.TITLE"),
             description: event.message,
           });
-          resetImagePaths();
+          resetProcessingState();
         }
         setActiveJobId(null);
         setTimeout(() => {
@@ -391,6 +397,11 @@ const Home = () => {
   }, [systemInfo]);
 
   // HANDLERS
+  const resetProcessingState = () => {
+    setProgress("");
+    setResultAsset(null);
+    setDoubleUpscaylCounter(0);
+  };
   const resetImagePaths = () => {
     logit("🔄 Resetting image paths");
     setDimensions({

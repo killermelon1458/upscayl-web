@@ -39,6 +39,43 @@ export type JobInfo = {
   status: "started" | "cancelled" | "complete" | "error";
 };
 
+export type BatchRequest = {
+  assetIds: string[];
+  settings: Omit<UpscaleRequest, "input">;
+};
+
+export type BatchItem = {
+  id: string;
+  input: ImageAsset;
+  status: "queued" | "processing" | "complete" | "failed" | "cancelled";
+  progress: number;
+  jobId?: string;
+  result?: ResultAsset;
+  error?: string;
+};
+
+export type BatchInfo = {
+  id: string;
+  status: "running" | "cancelling" | "complete" | "cancelled";
+  settings: BatchRequest["settings"];
+  items: BatchItem[];
+  progress: number;
+  downloadUrl: string;
+};
+
+export type BatchEvent =
+  | { type: "batch"; batch: BatchInfo }
+  | { type: "item-event"; itemId: string; event: JobEvent };
+
+export interface ImageBatchRuntime {
+  selectFiles(): Promise<File[]>;
+  startBatch(request: BatchRequest): Promise<BatchInfo>;
+  subscribeToBatch(id: string, listener: (event: BatchEvent) => void): () => void;
+  cancelBatch(id: string): Promise<void>;
+  retryBatch(id: string, itemIds: string[]): Promise<BatchInfo>;
+  getItemDiagnostics(jobId: string): Promise<string[]>;
+}
+
 export type JobErrorCode =
   | "invalid-gpu"
   | "read-write"
@@ -81,6 +118,8 @@ export type SystemInfo = {
 
 export interface UpscaylRuntime {
   readonly capabilities: RuntimeCapabilities;
+  /** Optional image-selection batches; Electron's folder workflow remains separate. */
+  readonly batch?: ImageBatchRuntime;
 
   log(...args: unknown[]): void;
   selectImage(): Promise<ImageAsset | null>;

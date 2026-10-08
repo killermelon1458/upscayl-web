@@ -19,6 +19,8 @@ import { SelectImageScale } from "../settings-tab/select-image-scale";
 import SelectModelDialog from "./select-model-dialog";
 import { ImageFormat } from "@common/image-formats";
 import { useRuntime } from "@/runtime/runtime-context";
+import { imageBatchModeAtom, imageBatchBusyAtom } from "@/atoms/image-batch-atom";
+import { useImageBatch } from "@/components/hooks/use-image-batch";
 
 interface IProps {
   selectImageHandler: () => Promise<void>;
@@ -49,6 +51,9 @@ function UpscaylSteps({
   dimensions,
 }: IProps) {
   const runtime = useRuntime();
+  const [imageBatchMode, setImageBatchMode] = useAtom(imageBatchModeAtom);
+  const imageBatchBusy = useAtomValue(imageBatchBusyAtom);
+  const imageBatch = useImageBatch();
   const [scale, setScale] = useAtom(scaleAtom);
   const [outputPath, setOutputPath] = useAtom(savedOutputPathAtom);
   const [progress, setProgress] = useAtom(progressAtom);
@@ -115,6 +120,18 @@ function UpscaylSteps({
       className={`animate-step-in animate flex h-screen flex-col gap-7 overflow-y-auto overflow-x-hidden p-5`}
     >
       {/* BATCH OPTION */}
+      {runtime.batch && (
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="toggle"
+            checked={imageBatchMode}
+            disabled={imageBatchBusy || imageBatch.uploading || progress.length > 0}
+            onChange={(event) => setImageBatchMode(event.target.checked)}
+          />
+          Batch images
+        </label>
+      )}
       {runtime.capabilities.supportsBatch && (
       <div className="flex flex-row items-center gap-2">
         <input
@@ -144,11 +161,12 @@ function UpscaylSteps({
         <p className="step-heading">{t("APP.FILE_SELECTION.TITLE")}</p>
         <button
           className="btn btn-primary"
-          onClick={!batchMode ? selectImageHandler : selectFolderHandler}
+          disabled={imageBatchBusy || imageBatch.uploading}
+          onClick={imageBatchMode ? imageBatch.select : !batchMode ? selectImageHandler : selectFolderHandler}
           data-tooltip-id="tooltip"
           data-tooltip-content={imageName}
         >
-          {batchMode
+          {imageBatchMode ? "Add images" : batchMode
             ? t("APP.FILE_SELECTION.BATCH_MODE_TYPE")
             : t("APP.FILE_SELECTION.SINGLE_MODE_TYPE")}
         </button>
@@ -246,7 +264,7 @@ function UpscaylSteps({
       {/* STEP 4 */}
       <div className="animate-step-in">
         <p className="step-heading">{t("APP.SCALE_SELECTION.TITLE")}</p>
-        {dimensions.width && dimensions.height && (
+        {!imageBatchMode && dimensions.width && dimensions.height && (
           <p className="mb-2 text-sm">
             {t("APP.SCALE_SELECTION.FROM_TITLE")}
             <span className="font-bold">
@@ -260,6 +278,7 @@ function UpscaylSteps({
         )}
         <button
           className="btn btn-secondary"
+          disabled={imageBatchBusy || (imageBatchMode && imageBatch.uploading)}
           onClick={
             progress.length > 0 ||
             (runtime.capabilities.requiresOutputTarget && !outputPath)
@@ -272,7 +291,7 @@ function UpscaylSteps({
               : upscaylHandler
           }
         >
-          {progress.length > 0
+          {imageBatchMode ? imageBatchBusy ? "Processing batch…" : "Start batch" : progress.length > 0
             ? t("APP.SCALE_SELECTION.IN_PROGRESS_BUTTON_TITLE")
             : t("APP.SCALE_SELECTION.START_BUTTON_TITLE")}
         </button>

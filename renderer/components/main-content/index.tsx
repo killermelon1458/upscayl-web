@@ -2,7 +2,7 @@
 import useLogger from "../hooks/use-logger";
 import { useState, useMemo, useEffect } from "react";
 import { ELECTRON_COMMANDS } from "@common/electron-commands";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useAtom } from "jotai";
 import {
   batchModeAtom,
   progressAtom,
@@ -21,6 +21,9 @@ import useTranslation from "../hooks/use-translation";
 import SliderView from "./slider-view";
 import { ImageAsset, ResultAsset } from "@common/types/runtime";
 import { useRuntime } from "@/runtime/runtime-context";
+import { imageBatchModeAtom } from "@/atoms/image-batch-atom";
+import { useImageBatch } from "../hooks/use-image-batch";
+import ImageBatchPanel from "./image-batch-panel";
 
 type MainContentProps = {
   inputAsset: ImageAsset | null;
@@ -57,6 +60,8 @@ const MainContent = ({
   setDimensions,
 }: MainContentProps) => {
   const runtime = useRuntime();
+  const [imageBatchMode, setImageBatchMode] = useAtom(imageBatchModeAtom);
+  const imageBatch = useImageBatch();
   const t = useTranslation();
   const logit = useLogger();
   const { toast } = useToast();
@@ -109,7 +114,12 @@ const MainContent = ({
 
   const handleDrop = async (e) => {
     e.preventDefault();
-    resetImagePaths();
+    if (activeJobId) return;
+    if (runtime.batch && (imageBatchMode || e.dataTransfer.files.length > 1)) {
+      setImageBatchMode(true);
+      await imageBatch.importFiles(Array.from(e.dataTransfer.files));
+      return;
+    }
     if (
       e.dataTransfer.items.length === 0 ||
       e.dataTransfer.files.length === 0
@@ -141,6 +151,7 @@ const MainContent = ({
     } else {
       try {
         const asset = await runtime.importImage(file);
+        resetImagePaths();
         logit("🖼 Imported image asset: ", asset.name);
         setInputAsset(asset);
         validateImageAsset(asset);
@@ -154,18 +165,17 @@ const MainContent = ({
   };
 
   const handlePaste = async (e: React.ClipboardEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    resetImagePaths();
     const file = e.clipboardData.files[0];
-    if (!file || !file.type.startsWith("image/")) {
-      toast({
-        title: t("ERRORS.INVALID_IMAGE_ERROR.TITLE"),
-        description: t("ERRORS.INVALID_IMAGE_ERROR.CLIPBOARD_DESCRIPTION"),
-      });
+    if (!file || !file.type.startsWith("image/")) return;
+    e.preventDefault();
+    if (activeJobId) return;
+    if (imageBatchMode && runtime.batch) {
+      await imageBatch.importFiles(Array.from(e.clipboardData.files));
       return;
     }
     try {
       const asset = await runtime.importImage(file);
+      resetImagePaths();
       setInputAsset(asset);
       validateImageAsset(asset);
     } catch (error) {
@@ -182,7 +192,9 @@ const MainContent = ({
     return () => {
       window.removeEventListener("paste", handlePasteEvent);
     };
-  }, [t, runtime]);
+  }, [t, runtime, imageBatchMode, imageBatch.busy, imageBatch.uploading, activeJobId]);
+
+  if (imageBatchMode && runtime.batch) return <ImageBatchPanel />;
 
   return (
     <div

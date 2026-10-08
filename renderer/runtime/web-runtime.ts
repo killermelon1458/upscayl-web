@@ -5,6 +5,10 @@ import {
   SystemInfo,
   UpscaleRequest,
   UpscaylRuntime,
+  BatchInfo,
+  BatchRequest,
+  BatchEvent,
+  ImageBatchRuntime,
 } from "@common/types/runtime";
 import { outputSizeWarning } from "@common/output-size";
 
@@ -32,6 +36,7 @@ const withAbsoluteAssetUrls = <T extends ImageAsset & { downloadUrl?: string }>(
 });
 
 export class WebRuntime implements UpscaylRuntime {
+  readonly batch: ImageBatchRuntime = this;
   private assets = new Map<string, ImageAsset>();
   readonly capabilities = {
     canSelectOutputTarget: false,
@@ -49,6 +54,117 @@ export class WebRuntime implements UpscaylRuntime {
 
   log(...args: unknown[]) {
     console.log(...args);
+  }
+
+  selectFiles(): Promise<File[]> {
+    return new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.multiple = true;
+      input.accept =
+        ".png,.jpg,.jpeg,.jfif,.webp,image/png,image/jpeg,image/webp";
+      input.style.display = "none";
+      document.body.appendChild(input);
+      const finish = (files: File[]) => {
+        input.remove();
+        resolve(files);
+      };
+      input.addEventListener(
+        "change",
+        () => finish(Array.from(input.files || [])),
+        { once: true },
+      );
+      input.addEventListener("cancel", () => finish([]), { once: true });
+      input.click();
+    });
+  }
+
+  private batchUrls(batch: BatchInfo): BatchInfo {
+    return {
+      ...batch,
+      downloadUrl: absoluteUrl(batch.downloadUrl),
+      items: batch.items.map((item) => ({
+        ...item,
+        input: withAbsoluteAssetUrls(item.input),
+        result: item.result ? withAbsoluteAssetUrls(item.result) : undefined,
+      })),
+    };
+  }
+
+  async startBatch(request: BatchRequest): Promise<BatchInfo> {
+    const warnings = request.assetIds
+      .map((id) => this.assets.get(id))
+      .filter((asset): asset is ImageAsset => !!asset)
+      .map((asset) =>
+        outputSizeWarning(asset, {
+          ...request.settings,
+          input: { type: "image", assetId: asset.id },
+        }),
+      )
+      .filter(Boolean);
+    if (
+      warnings.length &&
+      !window.confirm(
+        `${warnings.length} image(s) request very large outputs.\n${warnings[0]}\n\nContinue processing?`,
+      )
+    )
+      throw new Error("Batch was not started: large-output warning declined.");
+    return this.batchUrls(
+      await readResponse<BatchInfo>(
+        await fetch("/api/batches", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(request),
+        }),
+      ),
+    );
+  }
+
+  subscribeToBatch(id: string, listener: (event: BatchEvent) => void) {
+    const source = new EventSource(
+      `/api/batches/${encodeURIComponent(id)}/events`,
+    );
+    source.onmessage = (message) => {
+      const event = JSON.parse(message.data) as BatchEvent;
+      listener(
+        event.type === "batch"
+          ? { ...event, batch: this.batchUrls(event.batch) }
+          : event,
+      );
+      if (
+        event.type === "batch" &&
+        ["complete", "cancelled"].includes(event.batch.status)
+      )
+        source.close();
+    };
+    return () => source.close();
+  }
+
+  async cancelBatch(id: string) {
+    await readResponse(
+      await fetch(`/api/batches/${encodeURIComponent(id)}/cancel`, {
+        method: "POST",
+      }),
+    );
+  }
+
+  async retryBatch(id: string, itemIds: string[]) {
+    return this.batchUrls(
+      await readResponse<BatchInfo>(
+        await fetch(`/api/batches/${encodeURIComponent(id)}/retry`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ itemIds }),
+        }),
+      ),
+    );
+  }
+
+  async getItemDiagnostics(jobId: string) {
+    const job = await readResponse<{ diagnostics: string[] }>(
+      await fetch(`/api/jobs/${encodeURIComponent(jobId)}`),
+    );
+    return job.diagnostics;
   }
 
   selectImage(): Promise<ImageAsset | null> {

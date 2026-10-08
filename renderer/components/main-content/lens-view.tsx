@@ -135,7 +135,7 @@ const LensViewer = ({
           className="relative h-48 w-48 border border-gray-300 bg-cover bg-no-repeat"
           style={{
             backgroundImage: `url(${originalImage})`,
-            backgroundPosition: `-${hoverPosition.originalImageMouseX * zoomLevel - 96}px -${hoverPosition.originalImageMouseY * zoomLevel - 96}px`,
+            backgroundPosition: `${96 - hoverPosition.originalImageMouseX * zoomLevel}px ${96 - hoverPosition.originalImageMouseY * zoomLevel}px`,
             backgroundSize: `${originalImageRef.current?.naturalWidth * zoomLevel}px ${originalImageRef.current?.naturalHeight * zoomLevel}px`,
           }}
         >
@@ -148,7 +148,7 @@ const LensViewer = ({
           className="relative h-48 w-48 border border-gray-300 bg-cover bg-no-repeat"
           style={{
             backgroundImage: `url(${upscaledImage})`,
-            backgroundPosition: `-${hoverPosition.originalImageMouseX * zoomLevel - 96}px -${hoverPosition.originalImageMouseY * zoomLevel - 96}px`,
+            backgroundPosition: `${96 - hoverPosition.originalImageMouseX * zoomLevel}px ${96 - hoverPosition.originalImageMouseY * zoomLevel}px`,
             backgroundSize: `${originalImageRef.current?.naturalWidth * zoomLevel}px ${originalImageRef.current?.naturalHeight * zoomLevel}px`,
           }}
         >
