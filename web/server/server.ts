@@ -272,6 +272,10 @@ export class UpscaylWebServer {
     );
     const pathname = decodeURIComponent(url.pathname);
 
+    if (request.method === "GET" && pathname === "/api/health") {
+      return json(response, 200, { status: "ok" });
+    }
+
     if (request.method === "POST" && pathname === "/api/assets") {
       return this.uploadAsset(request, response);
     }

@@ -1,0 +1,32 @@
+services:
+  upscayl-web:
+    image: upscayl-web:local
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    platform: linux/amd64
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${UPSCAYL_WEB_BIND_ADDRESS:-127.0.0.1}:${UPSCAYL_WEB_HOST_PORT:-3000}:3000"
+    environment:
+      UPSCAYL_WEB_HOST: 0.0.0.0
+      UPSCAYL_WEB_PORT: "3000"
+      UPSCAYL_WEB_DATA_DIR: /data
+      UPSCAYL_WEB_UPLOAD_LIMIT_MB: "${UPSCAYL_WEB_UPLOAD_LIMIT_MB:-50}"
+      NVIDIA_DRIVER_CAPABILITIES: graphics,utility,compute
+    volumes:
+      - upscayl-data:/data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+volumes:
+  upscayl-data:

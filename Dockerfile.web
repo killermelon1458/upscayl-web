@@ -1,0 +1,60 @@
+# The bundled Linux backend is x86-64. Build/run on a Linux amd64 GPU host.
+FROM node:22-bookworm-slim AS build
+WORKDIR /app
+ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1 NEXT_TELEMETRY_DISABLED=1
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY tsconfig.json next.config.js tailwind.config.js postcss.config.js ./
+COPY scripts ./scripts
+COPY common ./common
+COPY electron ./electron
+COPY renderer ./renderer
+COPY web/server ./web/server
+COPY web/tests/check-production-assets.cjs ./web/tests/check-production-assets.cjs
+RUN npm run web:build && node web/tests/check-production-assets.cjs renderer/out
+
+# Prune the already locked dependency tree; no independent dependency versions.
+FROM build AS runtime-dependencies
+RUN node -e 'const fs=require("fs");const p=require("./package.json");p.dependencies=Object.fromEntries(["archiver","exiftool-vendored"].map(n=>[n,p.dependencies[n]]));delete p.devDependencies;delete p.scripts;fs.writeFileSync("package.json",JSON.stringify(p));' \
+    && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
+
+FROM node:22-bookworm-slim AS runtime
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.title="Upscayl Web" \
+      org.opencontainers.image.source="https://github.com/killermelon1458/upscayl-web" \
+      org.opencontainers.image.licenses="AGPL-3.0" \
+      org.opencontainers.image.revision=$VCS_REF
+RUN test "$(dpkg --print-architecture)" = amd64 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends libvulkan1 libgomp1 libx11-6 libxext6 libegl1 perl ca-certificates \
+    && apt-get clean \
+    && mkdir -p /data /app \
+    && chown node:node /data
+WORKDIR /app
+ENV NODE_ENV=production \
+    UPSCAYL_WEB_HOST=0.0.0.0 \
+    UPSCAYL_WEB_PORT=3000 \
+    UPSCAYL_WEB_PROJECT_ROOT=/app \
+    UPSCAYL_WEB_DATA_DIR=/data \
+    UPSCAYL_WEB_BACKEND=/app/resources/linux/bin/upscayl-bin \
+    UPSCAYL_WEB_MODELS_DIR=/app/resources/models \
+    UPSCAYL_WEB_STATIC_DIR=/app/renderer/out \
+    UPSCAYL_WEB_UPLOAD_LIMIT_MB=50 \
+    NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute
+COPY --from=runtime-dependencies /app/node_modules ./node_modules
+COPY --from=build /app/export/web ./export/web
+COPY --from=build /app/export/common ./export/common
+COPY --from=build /app/export/electron/utils/copy-metadata.js ./export/electron/utils/copy-metadata.js
+COPY --from=build /app/renderer/out ./renderer/out
+COPY resources/linux/bin/upscayl-bin ./resources/linux/bin/upscayl-bin
+COPY resources/models ./resources/models
+COPY web/docker/nvidia_icd.json /usr/share/vulkan/icd.d/nvidia_icd.json
+COPY web/docker/nvidia_egl.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+COPY package.json LICENSE Real-ESRGAN_LICENSE.txt README.md ./
+COPY docs/DOCKER.md ./notices/DOCKER.md
+COPY docs/licenses ./notices/licenses
+USER node
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD node -e 'fetch("http://127.0.0.1:"+process.env.UPSCAYL_WEB_PORT+"/api/health",{signal:AbortSignal.timeout(4000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'
+CMD ["node", "export/web/server/index.js"]

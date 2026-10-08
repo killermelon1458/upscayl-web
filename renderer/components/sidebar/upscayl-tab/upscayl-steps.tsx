@@ -278,10 +278,11 @@ function UpscaylSteps({
         )}
         <button
           className="btn btn-secondary"
-          disabled={imageBatchBusy || (imageBatchMode && imageBatch.uploading)}
+          disabled={imageBatchBusy || (imageBatchMode && imageBatch.uploading) ||
+            (!runtime.capabilities.requiresOutputTarget && progress.length > 0)}
           onClick={
-            progress.length > 0 ||
-            (runtime.capabilities.requiresOutputTarget && !outputPath)
+            runtime.capabilities.requiresOutputTarget &&
+            (progress.length > 0 || !outputPath)
               ? () =>
                   toast({
                     description: t(

@@ -211,7 +211,9 @@ const Sidebar = ({
     } else {
       toast({
         title: t("ERRORS.NO_IMAGE_ERROR.TITLE"),
-        description: t("ERRORS.NO_IMAGE_ERROR.DESCRIPTION"),
+        description: runtime.capabilities.requiresOutputTarget
+          ? t("ERRORS.NO_IMAGE_ERROR.DESCRIPTION")
+          : "Select or drop an image first.",
       });
       logit("🚫 No valid image selected");
     }

@@ -2,7 +2,7 @@
 
 Upscayl Web is an early self-hosted runtime that serves the existing Upscayl renderer in a browser and runs jobs on the server's local Upscayl backend. It supports image upload, built-in models, normal single-image upscaling, sequential browser batches, live progress over Server-Sent Events, cancellation, result previews, individual downloads, and batch ZIP downloads. Single-image results retain the existing comparison/lens views.
 
-Custom models, authentication, containers, retention policies, and production hardening are not implemented yet. Put an authentication-aware reverse proxy or private network in front of the server before exposing it beyond a trusted network.
+Custom models, authentication, retention policies, and production hardening are not implemented yet. [Docker deployment](DOCKER.md) packages this same runtime with the bundled Linux backend and models. Put an authentication-aware reverse proxy or private network in front of the server before exposing it beyond a trusted network.
 
 ## Prerequisites
 
@@ -73,7 +73,11 @@ A failed single-image job now preserves its selected input, dimensions, and sett
 
 ## API
 
-Existing upload/single-job/result routes remain available. New batch routes are:
+Existing upload/single-job/result routes remain available.
+
+`GET /api/health` is a lightweight HTTP liveness endpoint returning `{ "status": "ok" }`; it does not check GPU inference or resources.
+
+Batch routes are:
 
 | Method | Route                       | Behavior                                                                                                                                                                                                 |
 | ------ | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -106,7 +106,7 @@ export function useImageBatch() {
       .filter((item) => item.asset)
       .map((item) => item.asset!.id);
     if (!assetIds.length) {
-      report(new Error("Upload at least one image first."));
+      report(new Error("Add at least one image before starting the batch."));
       return;
     }
     setPending(true);

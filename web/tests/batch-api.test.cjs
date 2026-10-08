@@ -97,6 +97,9 @@ setTimeout(()=>{
     copyMetadata: false,
   };
   try {
+    const health = await fetch(base + "/api/health");
+    assert.equal(health.status, 200);
+    assert.deepEqual(await health.json(), { status: "ok" });
     const image = await readFile(
       path.join(__dirname, "../../resources/icons/128x128.png"),
     );
