@@ -2,11 +2,15 @@
 
 Upscayl Web is an early self-hosted runtime that serves the existing Upscayl renderer in a browser and runs jobs on the server's local Upscayl backend. It supports image upload, built-in models, normal single-image upscaling, sequential browser batches, live progress over Server-Sent Events, cancellation, result previews, individual downloads, and batch ZIP downloads. Single-image results retain the existing comparison/lens views.
 
-Custom models, authentication, retention policies, and production hardening are not implemented yet. [Docker deployment](DOCKER.md) packages this same runtime with the bundled Linux backend and models. Put an authentication-aware reverse proxy or private network in front of the server before exposing it beyond a trusted network.
+Custom models, authentication, retention policies, and production hardening are not implemented yet. [Docker deployment](DOCKER.md) packages this same runtime with the bundled Linux backend and models.
+
+## Deployment boundary
+
+Upscayl Web is intended for trusted self-hosted access, such as a LAN or private VPN, to use your own hardware from other devices. It is not designed for direct public-Internet exposure or as a hardened multi-user service. There is no built-in application authentication or authorization, and asset/job IDs are not a per-user access boundary. If Internet access is required, place the service behind appropriate authentication and network/reverse-proxy controls. Trusted access does not remove the need to manage upload limits and available disk/GPU resources.
 
 ## Prerequisites
 
-- Node.js and npm compatible with the repository lockfile
+- Node.js 18.20.5+ and npm compatible with the repository lockfile (Docker uses Node 22; the optional Chromium layout check requires Node 22+)
 - A Linux/Vulkan host supported by `upscayl-bin`
 - The Upscayl backend executable and built-in model files
 

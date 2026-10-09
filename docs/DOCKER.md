@@ -34,7 +34,9 @@ UPSCAYL_WEB_BIND_ADDRESS=0.0.0.0 UPSCAYL_WEB_HOST_PORT=3004 \
 
 Open `http://<server-LAN-IP>:3004` from another device. Keep these same variables for subsequent Compose operations (or use a private local `.env`, which must not be committed). Inside the container the application binds `0.0.0.0:3000`. Docker exposes only that application port; HTTPS is an external reverse-proxy responsibility.
 
-There is **no built-in authentication**. Anyone who can reach the service can use its GPU and access known resources. Use a trusted network/VPN or authentication-aware reverse proxy before Internet exposure. Upload limits are not quotas, and retained files can fill the data volume.
+Upscayl Web is intended for **trusted self-hosted LAN/private VPN access**, not direct public-Internet exposure or a hardened multi-user service. There is no built-in application authentication or authorization; anyone who can reach it can use the GPU and access known resources. If Internet access is required, place the service behind appropriate authentication and network/reverse-proxy controls. Upload limits are not quotas, and retained files can fill the data volume.
+
+All clients share one global GPU execution slot: one single-image job or one sequential batch. Competing starts return HTTP 409; there is no cross-user scheduling queue or per-user isolation.
 
 For an explicit standalone image build:
 
@@ -89,7 +91,7 @@ Changes to this local image do not publish anything to a registry. Base/package 
 
 ## Resource notices and redistribution
 
-The image retains `LICENSE` (Upscayl AGPL-3.0), `Real-ESRGAN_LICENSE.txt` (BSD-3-Clause, Xintao Wang), and upstream `README.md` with model/author credits under `/app`. This document is included at `/app/notices/DOCKER.md`. Dependency license files remain with their packages; Debian package notices remain in the runtime image. Upstream identifies [upscayl-ncnn](https://github.com/upscayl/upscayl-ncnn) as AGPLv3. Preserve these notices and provide the corresponding source for any distributed/modified image; the source OCI label identifies this fork, and `VCS_REF` can identify its revision.
+The image retains `LICENSE` (Upscayl AGPL-3.0), `Real-ESRGAN_LICENSE.txt` (BSD-3-Clause, Xintao Wang), and upstream `README.md` with model/author credits under `/app`. This document is included at `/app/notices/DOCKER.md`. Dependency license files remain with their packages; Debian package notices remain in the runtime image. Upstream identifies [upscayl-ncnn](https://github.com/upscayl/upscayl-ncnn) as AGPLv3. Preserve these notices and provide the corresponding source for any distributed/modified image; the source OCI label identifies the upstream repository, and `VCS_REF` can identify its revision. If distributing a modified fork, update that label to identify its corresponding source.
 
 Poppins is under the SIL Open Font License 1.1. Its [upstream notice](https://github.com/google/fonts/blob/main/ofl/poppins/OFL.txt) is retained in `docs/licenses/Poppins-OFL.txt` and `/app/notices/licenses/Poppins-OFL.txt`.
 
@@ -103,11 +105,9 @@ Upload a small image, use Upscayl Lite at 2×, observe progress, download and op
 
 This deployment was tested with Linux amd64, Docker Engine 29.1.3, Compose 2.29.2, NVIDIA driver 580.159.03 and a **GeForce RTX 2070 SUPER**. Backend diagnostics named that GPU (device 0), not software Vulkan. The final non-root container passed single 32×24 → 64×48 inference, SSE progress, metadata copying, sequential three-image batches, individual downloads and streamed ZIP downloads. ZIP entries were checked for unique meaningful names/no paths and every PNG was decoded at the expected dimensions. A restart preserved data-file hashes, discarded in-memory API metadata as documented, and allowed new GPU single/batch jobs.
 
-Initial headless checks exercised DOM presence, file selection, image decoding and processing, but did **not** assert computed styles or layout. Manual QA subsequently exposed a broken container stylesheet despite successful HTML/CSS/JS responses. Those original checks were insufficient to establish visual correctness.
-
 ### Production styling regression and checks
 
-The Docker build originally omitted root `postcss.config.js` and `tailwind.config.js`. Next exported syntactically valid CSS (7,301 bytes), but it retained unprocessed `@tailwind`/`@apply` directives and lacked generated layout/theme rules. Both configurations are now copied before building the shared renderer; no separate UI build or static-server rewrite is used. A clean no-cache rebuild produced 159,614 bytes of CSS, identical in SHA-256 to the fresh bare-metal production build. `components.json` is component-generator metadata, not a renderer build input.
+The renderer build requires root `postcss.config.js` and `tailwind.config.js`. Omitting them can produce syntactically valid CSS with unprocessed `@tailwind`/`@apply` directives and missing layout/theme rules, even when every asset returns HTTP 200. The Docker build includes both configurations and uses the same production renderer build as bare-metal deployment. `components.json` is component-generator metadata, not a renderer build input.
 
 The image build now runs a production-export check that rejects unprocessed directives, missing generated flex/position/button/theme selectors, suspiciously small stylesheets and missing referenced assets. Run the same check against an **actual running container URL**:
 
@@ -115,7 +115,7 @@ The image build now runs a production-export check that rejects unprocessed dire
 node web/tests/check-production-assets.cjs http://127.0.0.1:3000
 ```
 
-It fetches exported HTML, all referenced Next CSS/JS and stylesheet font/media URLs, checking status, CSS/JS MIME types and actual generated rules—not merely that CSS exists. This check rejected the original broken image.
+It fetches exported HTML, all referenced Next CSS/JS and stylesheet font/media URLs, checking status, CSS/JS MIME types and actual generated rules—not merely that CSS exists. Negative validation confirmed it rejects an export built without Tailwind/PostCSS configuration.
 
 For browser layout regression, launch a disposable Chromium profile (choose unused ports and stop that browser afterward):
 

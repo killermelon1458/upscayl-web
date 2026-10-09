@@ -68,6 +68,7 @@ Enlarge images without losing quality. It's almost like magic! 🎩🪄
   - [🍎 macOS](#-macos)
   - [🐌 Windows](#-windows)
 - [👨‍🏫 Documentation - Tutorials and Guides](#-documentation---tutorials-and-guides)
+- [Self-hosted web interface](#self-hosted-web-interface)
 - [⚖️ Demo Results (Before and After)](#%EF%B8%8F-results)
 - [🤫 Roadmap](#-roadmap)
 - [🛠 Developing Upscayl](#-development)
@@ -147,6 +148,12 @@ Check out our Documentation [here](https://docs.upscayl.org/).
 - [Convert your own models](https://github.com/upscayl/upscayl/wiki/%F0%9F%96%A5%EF%B8%8F-Model-Conversion---Create-more-AI-models!)
 - [Compatibility List](https://github.com/upscayl/upscayl/wiki/Compatibility-List)
 - [Troubleshooting](https://github.com/upscayl/upscayl/wiki/Troubleshooting)
+
+# Self-hosted web interface
+
+Upscayl can also run as a self-hosted web interface, allowing a browser on another device to use your GPU-equipped host. It reuses the existing renderer and backend, with browser uploads, previews, downloads, and sequential batches.
+
+See the [web runtime guide](docs/WEB_RUNTIME.md) or [GPU-enabled Docker deployment](docs/DOCKER.md). This mode is intended for trusted LAN/private VPN access, not direct public-Internet exposure; see the guides for security requirements and current limitations.
 
 # ⚖️ Results
 
